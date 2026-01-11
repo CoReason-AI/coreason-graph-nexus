@@ -9,6 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
 from collections.abc import Generator
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -99,3 +100,84 @@ def test_execute_query_failure(mock_driver: MagicMock) -> None:
 
     with pytest.raises(Exception, match="Query Error"):
         client.execute_query("BAD QUERY")
+
+
+# --- New Tests for Edge Cases & Complex Scenarios ---
+
+
+def test_execute_query_empty_result(mock_driver: MagicMock) -> None:
+    """Test successful query execution returning no records."""
+    driver_instance = mock_driver.return_value
+    driver_instance.execute_query.return_value = ([], None, None)
+
+    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+    result = client.execute_query("MATCH (n:NonExistent) RETURN n")
+
+    assert result == []
+
+
+def test_execute_query_complex_data(mock_driver: MagicMock) -> None:
+    """Test handling of complex return types (nested dicts, lists, nulls)."""
+    driver_instance = mock_driver.return_value
+
+    complex_data: dict[str, Any] = {
+        "id": 1,
+        "labels": ["Person", "Employee"],
+        "metadata": {"source": "etl", "active": True},
+        "reports_to": None,
+    }
+
+    mock_record = MagicMock()
+    mock_record.data.return_value = complex_data
+    driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+    result = client.execute_query("MATCH (p:Person) RETURN p")
+
+    assert len(result) == 1
+    assert result[0] == complex_data
+
+
+def test_execute_query_complex_params(mock_driver: MagicMock) -> None:
+    """Test passing complex parameters (lists, dicts) to the query."""
+    driver_instance = mock_driver.return_value
+    driver_instance.execute_query.return_value = ([], None, None)
+
+    params = {
+        "names": ["Alice", "Bob"],
+        "props": {"department": "Engineering"},
+        "limit": 10,
+    }
+
+    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+    client.execute_query("MATCH (n) WHERE n.name IN $names", params)
+
+    driver_instance.execute_query.assert_called_once_with(
+        "MATCH (n) WHERE n.name IN $names",
+        parameters_=params,
+        database_="neo4j",
+    )
+
+
+def test_custom_database_selection(mock_driver: MagicMock) -> None:
+    """Test that queries are executed against the specified custom database."""
+    driver_instance = mock_driver.return_value
+    driver_instance.execute_query.return_value = ([], None, None)
+
+    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"), database="analytics")
+    client.execute_query("MATCH (n) RETURN count(n)")
+
+    driver_instance.execute_query.assert_called_once()
+    call_args = driver_instance.execute_query.call_args
+    assert call_args.kwargs["database_"] == "analytics"
+
+
+def test_connection_failure_during_query(mock_driver: MagicMock) -> None:
+    """Test handling of ServiceUnavailable raised during query execution."""
+    driver_instance = mock_driver.return_value
+    driver_instance.execute_query.side_effect = ServiceUnavailable("Connection dropped")
+
+    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+
+    with pytest.raises(ServiceUnavailable, match="Connection dropped"):
+        client.execute_query("MATCH (n) RETURN n")
