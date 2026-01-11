@@ -138,6 +138,9 @@ class Neo4jClient:
             batch_size: The number of records to process in a single transaction.
             batch_param_name: The key used in the parameters dictionary for the list.
         """
+        if batch_size <= 0:
+            raise ValueError(f"Batch size must be positive, got {batch_size}")
+
         if not data:
             logger.info("No data provided for batch write.")
             return

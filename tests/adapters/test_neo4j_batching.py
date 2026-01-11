@@ -86,3 +86,64 @@ def test_batch_write_failure_propagates(client: Neo4jClient, mock_driver: MagicM
 
     with pytest.raises(ServiceUnavailable):
         client.batch_write("QUERY", [{"id": 1}])
+
+
+def test_batch_write_invalid_batch_size(client: Neo4jClient) -> None:
+    """Test that a non-positive batch size raises ValueError."""
+    with pytest.raises(ValueError, match="Batch size must be positive"):
+        client.batch_write("QUERY", [{"id": 1}], batch_size=0)
+
+    with pytest.raises(ValueError, match="Batch size must be positive"):
+        client.batch_write("QUERY", [{"id": 1}], batch_size=-5)
+
+
+def test_batch_write_exact_multiple(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test when data length is an exact multiple of batch size."""
+    query = "QUERY"
+    data: list[dict[str, Any]] = [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+    batch_size = 2
+
+    client.batch_write(query, data, batch_size=batch_size)
+
+    assert mock_driver.execute_query.call_count == 2
+    expected_calls = [
+        call(query, parameters_={"batch": [{"id": 1}, {"id": 2}]}, database_="neo4j"),
+        call(query, parameters_={"batch": [{"id": 3}, {"id": 4}]}, database_="neo4j"),
+    ]
+    mock_driver.execute_query.assert_has_calls(expected_calls)
+
+
+def test_batch_write_batch_size_one(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test granular batching with size 1."""
+    query = "QUERY"
+    data: list[dict[str, Any]] = [{"id": 1}, {"id": 2}]
+
+    client.batch_write(query, data, batch_size=1)
+
+    assert mock_driver.execute_query.call_count == 2
+
+
+def test_batch_write_complex_nested_data(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test batching with complex nested structures."""
+    query = "UNWIND $batch AS row MERGE (n:Complex {prop: row.props})"
+    complex_item = {"id": "A1", "metadata": {"source": "test", "tags": ["a", "b"]}, "metrics": [1.0, 2.5, 3.1]}
+    data = [complex_item]
+
+    client.batch_write(query, data, batch_size=1)
+
+    mock_driver.execute_query.assert_called_once_with(query, parameters_={"batch": [complex_item]}, database_="neo4j")
+
+
+def test_batch_write_partial_failure(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that execution stops if a middle batch fails."""
+    query = "QUERY"
+    data: list[dict[str, Any]] = [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    # First call succeeds, second fails
+    mock_driver.execute_query.side_effect = [([], None, None), ServiceUnavailable("Network Error"), ([], None, None)]
+
+    with pytest.raises(ServiceUnavailable, match="Network Error"):
+        client.batch_write(query, data, batch_size=1)
+
+    # Should have attempted 2 calls, not 3
+    assert mock_driver.execute_query.call_count == 2
