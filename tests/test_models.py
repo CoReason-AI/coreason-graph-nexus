@@ -14,8 +14,6 @@ from typing import Any, Generator
 
 import pytest
 import yaml
-from pydantic import ValidationError
-
 from coreason_graph_nexus.models import (
     Entity,
     GraphJob,
@@ -23,6 +21,7 @@ from coreason_graph_nexus.models import (
     PropertyMapping,
     Relationship,
 )
+from pydantic import ValidationError
 
 
 @pytest.fixture(name="valid_manifest_data")

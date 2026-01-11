@@ -12,7 +12,6 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-
 from coreason_graph_nexus.interfaces import SourceAdapter
 
 
