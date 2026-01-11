@@ -263,3 +263,72 @@ def test_graph_job_metrics_validation_custom_valid() -> None:
     assert job.metrics["nodes_created"] == 10
     # Note: Logic only checks for missing keys, not extra keys.
     # The default behavior is to allow extra keys.
+
+
+def test_entity_duplicate_property_targets() -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        Entity(
+            name="Drug",
+            source_table="dim_products",
+            id_column="id",
+            ontology_mapping="RxNorm",
+            properties=[
+                PropertyMapping(source="prod_name", target="name"),
+                PropertyMapping(source="prod_alias", target="name"),  # Duplicate target
+            ],
+        )
+    assert "Duplicate property targets found in Entity 'Drug': name" in str(excinfo.value)
+
+
+def test_graph_job_metrics_negative_values() -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        GraphJob(
+            id=uuid.uuid4(),
+            manifest_path="/path/to/manifest.yaml",
+            status="COMPLETE",
+            metrics={"nodes_created": -1, "edges_created": 0, "ontology_misses": 0},
+        )
+    assert "Metric 'nodes_created' cannot be negative" in str(excinfo.value)
+
+
+def test_manifest_complex_cyclic_topology(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Create cycle: Drug -> AdverseEvent -> Drug
+    data["relationships"].append(
+        {
+            "name": "TREATED_WITH",
+            "source_table": "treatments",
+            "start_node": "AdverseEvent",
+            "start_key": "event_id",
+            "end_node": "Drug",
+            "end_key": "drug_id",
+        }
+    )
+    manifest = ProjectionManifest(**data)
+    assert len(manifest.relationships) == 2
+    # Ensure validation passes for cyclic dependencies (which are valid in graphs)
+
+
+def test_manifest_disconnected_entities(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Add an orphan entity
+    data["entities"].append(
+        {"name": "Orphan", "source_table": "orphans", "id_column": "id", "ontology_mapping": "None", "properties": []}
+    )
+    manifest = ProjectionManifest(**data)
+    assert len(manifest.entities) == 3
+    # Ensure validation passes for disconnected entities
+
+
+def test_graph_job_metrics_invalid_types() -> None:
+    with pytest.raises(ValidationError):
+        GraphJob(
+            id=uuid.uuid4(),
+            manifest_path="/path/to/manifest.yaml",
+            status="COMPLETE",
+            metrics={
+                "nodes_created": "not-a-number",  # type: ignore # noqa: PGH003
+                "edges_created": 0,
+                "ontology_misses": 0,
+            },
+        )

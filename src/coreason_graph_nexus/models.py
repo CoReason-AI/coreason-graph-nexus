@@ -47,6 +47,22 @@ class Entity(BaseModel):
     ontology_mapping: str = Field(min_length=1, description="The ontology strategy to use for resolution.")
     properties: list[PropertyMapping] = Field(description="A list of property mappings.")
 
+    @model_validator(mode="after")
+    def validate_unique_property_targets(self) -> "Entity":
+        """
+        Validates that no two properties map to the same target field.
+        """
+        targets = [p.target for p in self.properties]
+        if len(targets) != len(set(targets)):
+            seen = set()
+            duplicates = set()
+            for x in targets:
+                if x in seen:
+                    duplicates.add(x)
+                seen.add(x)
+            raise ValueError(f"Duplicate property targets found in Entity '{self.name}': {', '.join(duplicates)}")
+        return self
+
 
 class Relationship(BaseModel):
     """
@@ -175,4 +191,14 @@ class GraphJob(BaseModel):
         missing_keys = required_keys - self.metrics.keys()
         if missing_keys:
             raise ValueError(f"Missing required metrics keys: {', '.join(sorted(missing_keys))}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_metrics_non_negative(self) -> "GraphJob":
+        """
+        Validates that all metric values are non-negative.
+        """
+        for key, value in self.metrics.items():
+            if value < 0:
+                raise ValueError(f"Metric '{key}' cannot be negative (got {value})")
         return self
