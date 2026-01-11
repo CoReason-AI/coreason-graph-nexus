@@ -133,6 +133,60 @@ def test_manifest_validation_invalid_end_node(valid_manifest_data: dict[str, Any
     assert "invalid end_node 'GhostEntity'" in str(excinfo.value)
 
 
+def test_manifest_duplicate_entity_names(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Duplicate "Drug" entity
+    data["entities"].append(data["entities"][0].copy())
+
+    with pytest.raises(ValidationError) as excinfo:
+        ProjectionManifest(**data)
+
+    assert "Duplicate entity names found: Drug" in str(excinfo.value)
+
+
+def test_manifest_self_referencing_relationship(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Add self-loop: Drug -> Drug
+    data["relationships"].append(
+        {
+            "name": "INTERACTS_WITH",
+            "source_table": "interactions",
+            "start_node": "Drug",
+            "start_key": "drug_a",
+            "end_node": "Drug",
+            "end_key": "drug_b",
+        }
+    )
+
+    manifest = ProjectionManifest(**data)
+    assert len(manifest.relationships) == 2
+    assert manifest.relationships[1].start_node == "Drug"
+    assert manifest.relationships[1].end_node == "Drug"
+
+
+def test_manifest_case_sensitivity(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Change relationship to reference "drug" (lowercase) instead of "Drug"
+    data["relationships"][0]["start_node"] = "drug"
+
+    with pytest.raises(ValidationError) as excinfo:
+        ProjectionManifest(**data)
+
+    # Should fail because "drug" != "Drug"
+    assert "invalid start_node 'drug'" in str(excinfo.value)
+
+
+def test_manifest_empty_strings(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Set an entity name to empty string
+    data["entities"][0]["name"] = ""
+
+    with pytest.raises(ValidationError) as excinfo:
+        ProjectionManifest(**data)
+
+    assert "String should have at least 1 character" in str(excinfo.value)
+
+
 def test_manifest_from_yaml(tmp_path: Path, valid_manifest_data: dict[str, Any]) -> None:
     yaml_file = tmp_path / "manifest.yaml"
     with open(yaml_file, "w") as f:
@@ -142,6 +196,11 @@ def test_manifest_from_yaml(tmp_path: Path, valid_manifest_data: dict[str, Any])
     assert manifest.version == "1.0"
     assert len(manifest.entities) == 2
     assert manifest.entities[0].name == "Drug"
+
+
+def test_from_yaml_file_not_found() -> None:
+    with pytest.raises(FileNotFoundError):
+        ProjectionManifest.from_yaml("non_existent_file.yaml")
 
 
 def test_graph_job_creation() -> None:

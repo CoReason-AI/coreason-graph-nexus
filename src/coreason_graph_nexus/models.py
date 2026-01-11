@@ -25,8 +25,8 @@ class PropertyMapping(BaseModel):
         target: The property name in the graph node.
     """
 
-    source: str
-    target: str
+    source: str = Field(min_length=1)
+    target: str = Field(min_length=1)
 
 
 class Entity(BaseModel):
@@ -41,10 +41,10 @@ class Entity(BaseModel):
         properties: A list of property mappings.
     """
 
-    name: str
-    source_table: str
-    id_column: str
-    ontology_mapping: str
+    name: str = Field(min_length=1)
+    source_table: str = Field(min_length=1)
+    id_column: str = Field(min_length=1)
+    ontology_mapping: str = Field(min_length=1)
     properties: list[PropertyMapping]
 
 
@@ -61,12 +61,12 @@ class Relationship(BaseModel):
         end_key: The foreign key column in the source table pointing to the end node.
     """
 
-    name: str
-    source_table: str
-    start_node: str
-    start_key: str
-    end_node: str
-    end_key: str
+    name: str = Field(min_length=1)
+    source_table: str = Field(min_length=1)
+    start_node: str = Field(min_length=1)
+    start_key: str = Field(min_length=1)
+    end_node: str = Field(min_length=1)
+    end_key: str = Field(min_length=1)
 
 
 class ProjectionManifest(BaseModel):
@@ -80,10 +80,27 @@ class ProjectionManifest(BaseModel):
         relationships: A list of Relationship definitions.
     """
 
-    version: str
-    source_connection: str
+    version: str = Field(min_length=1)
+    source_connection: str = Field(min_length=1)
     entities: list[Entity]
     relationships: list[Relationship]
+
+    @model_validator(mode="after")
+    def validate_unique_entities(self) -> "ProjectionManifest":
+        """
+        Validates that all entity names are unique.
+        """
+        names = [e.name for e in self.entities]
+        if len(names) != len(set(names)):
+            # Find duplicates
+            seen: set[str] = set()
+            duplicates = set()
+            for x in names:
+                if x in seen:
+                    duplicates.add(x)
+                seen.add(x)
+            raise ValueError(f"Duplicate entity names found: {', '.join(duplicates)}")
+        return self
 
     @model_validator(mode="after")
     def validate_relationship_endpoints(self) -> "ProjectionManifest":
