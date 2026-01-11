@@ -25,8 +25,8 @@ class PropertyMapping(BaseModel):
         target: The property name in the graph node.
     """
 
-    source: str = Field(min_length=1)
-    target: str = Field(min_length=1)
+    source: str = Field(min_length=1, description="The column name in the source table.")
+    target: str = Field(min_length=1, description="The property name in the graph node.")
 
 
 class Entity(BaseModel):
@@ -41,11 +41,27 @@ class Entity(BaseModel):
         properties: A list of property mappings.
     """
 
-    name: str = Field(min_length=1)
-    source_table: str = Field(min_length=1)
-    id_column: str = Field(min_length=1)
-    ontology_mapping: str = Field(min_length=1)
-    properties: list[PropertyMapping]
+    name: str = Field(min_length=1, description="The label of the node (e.g., 'Drug').")
+    source_table: str = Field(min_length=1, description="The database table or view to read from.")
+    id_column: str = Field(min_length=1, description="The column that uniquely identifies the entity.")
+    ontology_mapping: str = Field(min_length=1, description="The ontology strategy to use for resolution.")
+    properties: list[PropertyMapping] = Field(description="A list of property mappings.")
+
+    @model_validator(mode="after")
+    def validate_unique_property_targets(self) -> "Entity":
+        """
+        Validates that no two properties map to the same target field.
+        """
+        targets = [p.target for p in self.properties]
+        if len(targets) != len(set(targets)):
+            seen = set()
+            duplicates = set()
+            for x in targets:
+                if x in seen:
+                    duplicates.add(x)
+                seen.add(x)
+            raise ValueError(f"Duplicate property targets found in Entity '{self.name}': {', '.join(duplicates)}")
+        return self
 
 
 class Relationship(BaseModel):
@@ -61,12 +77,16 @@ class Relationship(BaseModel):
         end_key: The foreign key column in the source table pointing to the end node.
     """
 
-    name: str = Field(min_length=1)
-    source_table: str = Field(min_length=1)
-    start_node: str = Field(min_length=1)
-    start_key: str = Field(min_length=1)
-    end_node: str = Field(min_length=1)
-    end_key: str = Field(min_length=1)
+    name: str = Field(min_length=1, description="The type of the relationship (e.g., 'REPORTED_EVENT').")
+    source_table: str = Field(min_length=1, description="The database table or view to read from.")
+    start_node: str = Field(min_length=1, description="The label of the starting node (must match an Entity name).")
+    start_key: str = Field(
+        min_length=1, description="The foreign key column in the source table pointing to the start node."
+    )
+    end_node: str = Field(min_length=1, description="The label of the ending node (must match an Entity name).")
+    end_key: str = Field(
+        min_length=1, description="The foreign key column in the source table pointing to the end node."
+    )
 
 
 class ProjectionManifest(BaseModel):
@@ -80,10 +100,10 @@ class ProjectionManifest(BaseModel):
         relationships: A list of Relationship definitions.
     """
 
-    version: str = Field(min_length=1)
-    source_connection: str = Field(min_length=1)
-    entities: list[Entity]
-    relationships: list[Relationship]
+    version: str = Field(min_length=1, description="The version of the manifest schema.")
+    source_connection: str = Field(min_length=1, description="The connection string for the source database.")
+    entities: list[Entity] = Field(description="A list of Entity definitions.")
+    relationships: list[Relationship] = Field(description="A list of Relationship definitions.")
 
     @model_validator(mode="after")
     def validate_unique_entities(self) -> "ProjectionManifest":
@@ -148,13 +168,37 @@ class GraphJob(BaseModel):
         metrics: Performance metrics collected during execution.
     """
 
-    id: UUID
-    manifest_path: str
-    status: Literal["RESOLVING", "PROJECTING", "COMPUTING", "COMPLETE"]
+    id: UUID = Field(description="Unique identifier for the job.")
+    manifest_path: str = Field(description="Path to the manifest file used for this job.")
+    status: Literal["RESOLVING", "PROJECTING", "COMPUTING", "COMPLETE"] = Field(
+        description="Current status of the job."
+    )
     metrics: dict[str, int | float] = Field(
         default_factory=lambda: {
             "nodes_created": 0.0,
             "edges_created": 0.0,
             "ontology_misses": 0.0,
-        }
+        },
+        description="Performance metrics collected during execution.",
     )
+
+    @model_validator(mode="after")
+    def validate_metrics_keys(self) -> "GraphJob":
+        """
+        Validates that the metrics dictionary contains all required keys.
+        """
+        required_keys = {"nodes_created", "edges_created", "ontology_misses"}
+        missing_keys = required_keys - self.metrics.keys()
+        if missing_keys:
+            raise ValueError(f"Missing required metrics keys: {', '.join(sorted(missing_keys))}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_metrics_non_negative(self) -> "GraphJob":
+        """
+        Validates that all metric values are non-negative.
+        """
+        for key, value in self.metrics.items():
+            if value < 0:
+                raise ValueError(f"Metric '{key}' cannot be negative (got {value})")
+        return self
