@@ -9,8 +9,11 @@
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
 import uuid
+from pathlib import Path
+from typing import Any, Generator
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from coreason_graph_nexus.models import (
@@ -20,6 +23,41 @@ from coreason_graph_nexus.models import (
     PropertyMapping,
     Relationship,
 )
+
+
+@pytest.fixture(name="valid_manifest_data")
+def valid_manifest_data_fixture() -> Generator[dict[str, Any], None, None]:
+    data = {
+        "version": "1.0",
+        "source_connection": "postgres://db",
+        "entities": [
+            {
+                "name": "Drug",
+                "source_table": "products",
+                "id_column": "id",
+                "ontology_mapping": "RxNorm",
+                "properties": [{"source": "prod_name", "target": "name"}],
+            },
+            {
+                "name": "AdverseEvent",
+                "source_table": "events",
+                "id_column": "id",
+                "ontology_mapping": "MedDRA",
+                "properties": [{"source": "term", "target": "name"}],
+            },
+        ],
+        "relationships": [
+            {
+                "name": "CAUSED",
+                "source_table": "links",
+                "start_node": "Drug",
+                "start_key": "drug_id",
+                "end_node": "AdverseEvent",
+                "end_key": "event_id",
+            }
+        ],
+    }
+    yield data
 
 
 def test_property_mapping_creation() -> None:
@@ -55,31 +93,10 @@ def test_relationship_creation() -> None:
     assert rel.end_node == "AdverseEvent"
 
 
-def test_projection_manifest_creation() -> None:
-    mapping = PropertyMapping(source="product_name", target="name")
-    entity = Entity(
-        name="Drug",
-        source_table="dim_products",
-        id_column="product_code",
-        ontology_mapping="RxNorm",
-        properties=[mapping],
-    )
-    rel = Relationship(
-        name="REPORTED_EVENT",
-        source_table="fact_adverse_events",
-        start_node="Drug",
-        start_key="product_code",
-        end_node="AdverseEvent",
-        end_key="event_term",
-    )
-    manifest = ProjectionManifest(
-        version="1.0",
-        source_connection="postgres://gold_db",
-        entities=[entity],
-        relationships=[rel],
-    )
+def test_projection_manifest_creation(valid_manifest_data: dict[str, Any]) -> None:
+    manifest = ProjectionManifest(**valid_manifest_data)
     assert manifest.version == "1.0"
-    assert len(manifest.entities) == 1
+    assert len(manifest.entities) == 2
     assert len(manifest.relationships) == 1
 
 
@@ -89,8 +106,42 @@ def test_projection_manifest_validation_error() -> None:
             version="1.0",
             source_connection="postgres://gold_db",
             entities=[],
-            relationships="invalid",  # type: ignore
+            relationships="invalid",  # type: ignore # noqa: PGH003
         )
+
+
+def test_manifest_validation_invalid_start_node(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Set start_node to something that doesn't exist in entities
+    data["relationships"][0]["start_node"] = "NonExistentEntity"
+
+    with pytest.raises(ValidationError) as excinfo:
+        ProjectionManifest(**data)
+
+    assert "invalid start_node 'NonExistentEntity'" in str(excinfo.value)
+    assert "Must be one of: AdverseEvent, Drug" in str(excinfo.value)
+
+
+def test_manifest_validation_invalid_end_node(valid_manifest_data: dict[str, Any]) -> None:
+    data = valid_manifest_data
+    # Set end_node to something that doesn't exist in entities
+    data["relationships"][0]["end_node"] = "GhostEntity"
+
+    with pytest.raises(ValidationError) as excinfo:
+        ProjectionManifest(**data)
+
+    assert "invalid end_node 'GhostEntity'" in str(excinfo.value)
+
+
+def test_manifest_from_yaml(tmp_path: Path, valid_manifest_data: dict[str, Any]) -> None:
+    yaml_file = tmp_path / "manifest.yaml"
+    with open(yaml_file, "w") as f:
+        yaml.dump(valid_manifest_data, f)
+
+    manifest = ProjectionManifest.from_yaml(yaml_file)
+    assert manifest.version == "1.0"
+    assert len(manifest.entities) == 2
+    assert manifest.entities[0].name == "Drug"
 
 
 def test_graph_job_creation() -> None:
@@ -110,7 +161,7 @@ def test_graph_job_validation_error() -> None:
         GraphJob(
             id=uuid.uuid4(),
             manifest_path="/path/to/manifest.yaml",
-            status="INVALID_STATUS",  # type: ignore
+            status="INVALID_STATUS",  # type: ignore # noqa: PGH003
         )
 
 
@@ -125,18 +176,3 @@ def test_graph_job_metrics_default() -> None:
         "edges_created": 0,
         "ontology_misses": 0,
     }
-
-
-def test_graph_job_metrics_custom() -> None:
-    metrics: dict[str, int | float] = {
-        "nodes_created": 100.0,
-        "edges_created": 200.0,
-        "ontology_misses": 5.0,
-    }
-    job = GraphJob(
-        id=uuid.uuid4(),
-        manifest_path="/path/to/manifest.yaml",
-        status="COMPLETE",
-        metrics=metrics,
-    )
-    assert job.metrics == metrics

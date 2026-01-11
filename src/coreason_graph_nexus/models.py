@@ -8,18 +8,39 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+import yaml
+from pydantic import BaseModel, Field, model_validator
 
 
 class PropertyMapping(BaseModel):
+    """
+    Maps a column in the source table to a property on the graph node.
+
+    Attributes:
+        source: The column name in the source table.
+        target: The property name in the graph node.
+    """
+
     source: str
     target: str
 
 
 class Entity(BaseModel):
+    """
+    Defines how to map a source table to a Graph Node (Entity).
+
+    Attributes:
+        name: The label of the node (e.g., 'Drug').
+        source_table: The database table or view to read from.
+        id_column: The column that uniquely identifies the entity.
+        ontology_mapping: The ontology strategy to use for resolution (e.g., 'RxNorm').
+        properties: A list of property mappings.
+    """
+
     name: str
     source_table: str
     id_column: str
@@ -28,6 +49,18 @@ class Entity(BaseModel):
 
 
 class Relationship(BaseModel):
+    """
+    Defines how to map a source table to a Graph Relationship (Edge).
+
+    Attributes:
+        name: The type of the relationship (e.g., 'REPORTED_EVENT').
+        source_table: The database table or view to read from.
+        start_node: The label of the starting node (must match an Entity name).
+        start_key: The foreign key column in the source table pointing to the start node.
+        end_node: The label of the ending node (must match an Entity name).
+        end_key: The foreign key column in the source table pointing to the end node.
+    """
+
     name: str
     source_table: str
     start_node: str
@@ -37,13 +70,67 @@ class Relationship(BaseModel):
 
 
 class ProjectionManifest(BaseModel):
+    """
+    The master configuration for a Graph Projection job.
+
+    Attributes:
+        version: The version of the manifest schema.
+        source_connection: The connection string for the source database.
+        entities: A list of Entity definitions.
+        relationships: A list of Relationship definitions.
+    """
+
     version: str
     source_connection: str
     entities: list[Entity]
     relationships: list[Relationship]
 
+    @model_validator(mode="after")
+    def validate_relationship_endpoints(self) -> "ProjectionManifest":
+        """
+        Validates that all relationships connect to entities defined in the manifest.
+        """
+        entity_names = {e.name for e in self.entities}
+        for i, rel in enumerate(self.relationships):
+            if rel.start_node not in entity_names:
+                raise ValueError(
+                    f"Relationship '{rel.name}' (index {i}) has invalid start_node '{rel.start_node}'. "
+                    f"Must be one of: {', '.join(sorted(entity_names))}"
+                )
+            if rel.end_node not in entity_names:
+                raise ValueError(
+                    f"Relationship '{rel.name}' (index {i}) has invalid end_node '{rel.end_node}'. "
+                    f"Must be one of: {', '.join(sorted(entity_names))}"
+                )
+        return self
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "ProjectionManifest":
+        """
+        Loads a ProjectionManifest from a YAML file.
+
+        Args:
+            path: The path to the YAML file.
+
+        Returns:
+            A validated ProjectionManifest instance.
+        """
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return cls(**data)
+
 
 class GraphJob(BaseModel):
+    """
+    Represents the runtime state of a Graph Projection Job.
+
+    Attributes:
+        id: Unique identifier for the job.
+        manifest_path: Path to the manifest file used for this job.
+        status: Current status of the job.
+        metrics: Performance metrics collected during execution.
+    """
+
     id: UUID
     manifest_path: str
     status: Literal["RESOLVING", "PROJECTING", "COMPUTING", "COMPLETE"]
