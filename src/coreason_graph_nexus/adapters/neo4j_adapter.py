@@ -116,3 +116,44 @@ class Neo4jClient:
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
             raise
+
+    def batch_write(
+        self,
+        query: str,
+        data: list[dict[str, Any]],
+        batch_size: int = 10000,
+        batch_param_name: str = "batch",
+    ) -> None:
+        """
+        Executes a Cypher query in batches.
+
+        This method is designed for high-throughput ingestion using the UNWIND pattern.
+        The data list is sliced into chunks, and each chunk is passed as a parameter
+        to the Cypher query.
+
+        Args:
+            query: The Cypher query string. It should typically start with
+                   'UNWIND $batch AS row ...' (where 'batch' matches batch_param_name).
+            data: A list of dictionaries to be ingested.
+            batch_size: The number of records to process in a single transaction.
+            batch_param_name: The key used in the parameters dictionary for the list.
+        """
+        if batch_size <= 0:
+            raise ValueError(f"Batch size must be positive, got {batch_size}")
+
+        if not data:
+            logger.info("No data provided for batch write.")
+            return
+
+        total = len(data)
+        logger.info(f"Starting batch write: {total} records, batch_size={batch_size}")
+
+        for i in range(0, total, batch_size):
+            chunk = data[i : i + batch_size]
+            try:
+                self.execute_query(query, parameters={batch_param_name: chunk})
+            except Exception as e:
+                logger.error(f"Batch write failed at index {i} (processing {len(chunk)} records): {e}")
+                raise
+
+        logger.info(f"Batch write completed: {total} records processed.")
