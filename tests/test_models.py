@@ -235,3 +235,31 @@ def test_graph_job_metrics_default() -> None:
         "edges_created": 0,
         "ontology_misses": 0,
     }
+
+
+def test_graph_job_metrics_validation_missing_key() -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        GraphJob(
+            id=uuid.uuid4(),
+            manifest_path="/path/to/manifest.yaml",
+            status="COMPLETE",
+            metrics={"nodes_created": 10},  # Missing other keys
+        )
+    assert "Missing required metrics keys: edges_created, ontology_misses" in str(excinfo.value)
+
+
+def test_graph_job_metrics_validation_custom_valid() -> None:
+    job = GraphJob(
+        id=uuid.uuid4(),
+        manifest_path="/path/to/manifest.yaml",
+        status="COMPLETE",
+        metrics={
+            "nodes_created": 10,
+            "edges_created": 20,
+            "ontology_misses": 5,
+            "extra_metric": 100,  # Extra keys allowed by Pydantic usually, unless extra="forbid"
+        },
+    )
+    assert job.metrics["nodes_created"] == 10
+    # Note: Logic only checks for missing keys, not extra keys.
+    # The default behavior is to allow extra keys.
