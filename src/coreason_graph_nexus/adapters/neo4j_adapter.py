@@ -11,8 +11,10 @@
 from types import TracebackType
 from typing import Any, Self
 
+import networkx as nx
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
+from neo4j.graph import Node, Path, Relationship
 
 from coreason_graph_nexus.utils.logger import logger
 
@@ -233,3 +235,101 @@ class Neo4jClient:
 
         logger.info(f"Merging relationships ({start_label})-[{rel_type}]->({end_label})")
         self.batch_write(query, data, batch_size=batch_size)
+
+    def to_networkx(self, query: str, parameters: dict[str, Any] | None = None) -> nx.DiGraph:
+        """
+        Executes a Cypher query and converts the result into a NetworkX DiGraph.
+
+        Parses Nodes, Relationships, and Paths from the raw Neo4j records.
+        - Nodes are added with their element_id as the node ID, and properties + labels are stored.
+        - Relationships are added as edges with type and properties.
+
+        Args:
+            query: The Cypher query string.
+            parameters: A dictionary of parameters for the query.
+
+        Returns:
+            A networkx.DiGraph object representing the result subgraph.
+        """
+        if parameters is None:
+            parameters = {}
+
+        graph = nx.DiGraph()
+
+        try:
+            records, _, _ = self._driver.execute_query(
+                query,
+                parameters_=parameters,
+                database_=self._database,
+            )
+
+            for record in records:
+                for item in record.values():
+                    if isinstance(item, Node):
+                        # Use element_id (Neo4j 5.x) or id (Neo4j 4.x/compat)
+                        # element_id is preferred for 5.x
+                        node_id = item.element_id if hasattr(item, "element_id") else item.id
+                        # Merge labels and properties
+                        attrs = dict(item.items())
+                        attrs["labels"] = list(item.labels)
+                        graph.add_node(node_id, **attrs)
+
+                    elif isinstance(item, Relationship):
+                        start_id = (
+                            item.start_node.element_id if hasattr(item.start_node, "element_id") else item.start_node.id
+                        )
+                        end_id = item.end_node.element_id if hasattr(item.end_node, "element_id") else item.end_node.id
+                        attrs = dict(item.items())
+                        attrs["type"] = item.type
+                        graph.add_edge(start_id, end_id, **attrs)
+
+                    elif isinstance(item, Path):
+                        # Iterate over nodes and relationships in the path
+                        for node in item.nodes:
+                            node_id = node.element_id if hasattr(node, "element_id") else node.id
+                            attrs = dict(node.items())
+                            attrs["labels"] = list(node.labels)
+                            graph.add_node(node_id, **attrs)
+
+                        for rel in item.relationships:
+                            start_id = (
+                                rel.start_node.element_id
+                                if hasattr(rel.start_node, "element_id")
+                                else rel.start_node.id
+                            )
+                            end_id = rel.end_node.element_id if hasattr(rel.end_node, "element_id") else rel.end_node.id
+                            attrs = dict(rel.items())
+                            attrs["type"] = rel.type
+                            graph.add_edge(start_id, end_id, **attrs)
+                    elif isinstance(item, list):
+                        # Handle list of things (e.g. collected nodes)
+                        for subitem in item:
+                            if isinstance(subitem, Node):
+                                node_id = subitem.element_id if hasattr(subitem, "element_id") else subitem.id
+                                attrs = dict(subitem.items())
+                                attrs["labels"] = list(subitem.labels)
+                                graph.add_node(node_id, **attrs)
+                            elif isinstance(subitem, Relationship):
+                                start_id = (
+                                    subitem.start_node.element_id
+                                    if hasattr(subitem.start_node, "element_id")
+                                    else subitem.start_node.id
+                                )
+                                end_id = (
+                                    subitem.end_node.element_id
+                                    if hasattr(subitem.end_node, "element_id")
+                                    else subitem.end_node.id
+                                )
+                                attrs = dict(subitem.items())
+                                attrs["type"] = subitem.type
+                                graph.add_edge(start_id, end_id, **attrs)
+
+            logger.info(
+                f"Converted Cypher result to NetworkX graph: "
+                f"{graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges"
+            )
+            return graph
+
+        except Exception as e:
+            logger.error(f"Failed to convert Cypher to NetworkX: {e}")
+            raise
