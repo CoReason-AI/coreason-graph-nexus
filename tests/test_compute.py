@@ -243,3 +243,85 @@ def test_compute_pagerank_cast_any_return(mock_neo4j_client: MagicMock, sample_g
     computer = GraphComputer(mock_neo4j_client)
     res = computer._compute_pagerank(sample_graph, "rank")
     assert isinstance(res, dict)
+
+
+# --- Complex Scenarios ---
+
+
+def test_run_analysis_louvain_disconnected(mock_neo4j_client: MagicMock) -> None:
+    """Test Louvain on a graph with two disconnected components."""
+    G = nx.DiGraph()
+    # Component 1
+    G.add_node("e1", id="A")
+    G.add_node("e2", id="B")
+    G.add_edge("e1", "e2")
+
+    # Component 2
+    G.add_node("e3", id="C")
+    G.add_node("e4", id="D")
+    G.add_edge("e3", "e4")
+
+    mock_neo4j_client.to_networkx.return_value = G
+    computer = GraphComputer(mock_neo4j_client)
+
+    req = GraphAnalysisRequest(center_node_id="A", algorithm=AnalysisAlgo.LOUVAIN, write_property="comm_id")
+
+    result = computer.run_analysis(req)
+
+    # We expect all 4 nodes to be assigned a community
+    assert len(result) == 4
+    assert "e1" in result
+    assert "e3" in result
+
+    # e1 and e2 should be in same community (or at least valid IDs)
+    # e3 and e4 should be in same community
+    # The communities might be different or same depending on modularity but usually distinct for disjoint.
+
+    # Verify write back size
+    args, _ = mock_neo4j_client.batch_write.call_args
+    data = args[1]
+    assert len(data) == 4
+
+
+def test_run_analysis_shortest_path_directionality(mock_neo4j_client: MagicMock) -> None:
+    """Test that directionality is respected in shortest path."""
+    G = nx.DiGraph()
+    G.add_node("e1", id="A")
+    G.add_node("e2", id="B")
+    G.add_edge("e1", "e2")  # A -> B only
+
+    mock_neo4j_client.to_networkx.return_value = G
+    computer = GraphComputer(mock_neo4j_client)
+
+    # Case 1: A -> B should exist
+    req1 = GraphAnalysisRequest(center_node_id="A", target_node_id="B", algorithm=AnalysisAlgo.SHORTEST_PATH)
+    path1 = computer.run_analysis(req1)
+    assert path1 == ["e1", "e2"]
+
+    # Case 2: B -> A should NOT exist
+    req2 = GraphAnalysisRequest(center_node_id="B", target_node_id="A", algorithm=AnalysisAlgo.SHORTEST_PATH)
+    path2 = computer.run_analysis(req2)
+    assert path2 == []
+
+
+def test_run_analysis_pagerank_sink_node(mock_neo4j_client: MagicMock) -> None:
+    """Test PageRank with a sink node (no outgoing edges)."""
+    G = nx.DiGraph()
+    G.add_node("e1", id="A")
+    G.add_node("e2", id="B")
+    G.add_edge("e1", "e2")  # A -> B, B is sink
+
+    mock_neo4j_client.to_networkx.return_value = G
+    computer = GraphComputer(mock_neo4j_client)
+
+    req = GraphAnalysisRequest(center_node_id="A", algorithm=AnalysisAlgo.PAGERANK)
+
+    scores = computer.run_analysis(req)
+
+    assert len(scores) == 2
+    # B should have higher score than A usually (accumlates)
+    assert scores["e2"] > scores["e1"]
+
+    # Check values are valid floats
+    assert isinstance(scores["e1"], float)
+    assert isinstance(scores["e2"], float)
