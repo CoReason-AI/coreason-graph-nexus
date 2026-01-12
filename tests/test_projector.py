@@ -265,3 +265,157 @@ def test_ingest_entities_property_mapping(
     # 'name' mapped to 'label'
     assert "name" not in item
     assert "label" in item
+
+
+# --- Complex Scenarios ---
+
+
+def test_ingest_entities_many_to_one_resolution(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test merging of multiple source entities into a single resolved graph node."""
+    # Data: Two different source items that map to the same concept
+    # "Tyl" -> RxNorm:111, "Para" -> RxNorm:111
+    data: dict[str, list[dict[str, Any]]] = {
+        "drugs": [
+            {"drug_id": "Tyl", "name": "Tylenol", "type": "Brand"},
+            {"drug_id": "Para", "name": "Paracetamol", "type": "Generic"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    # Resolver maps both to same ID
+    resolver = MockOntologyResolver({"Tyl": "RxNorm:111", "Para": "RxNorm:111"})
+
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+    engine.ingest_entities(sample_manifest, adapter, graph_job)
+
+    # 1. Verify metrics: 2 source records processed (nodes_created metric tracks rows processed essentially)
+    assert graph_job.metrics["nodes_created"] == 2.0
+
+    # 2. Verify Neo4j data
+    args, _ = mock_neo4j_client.merge_nodes.call_args
+    batch_data = args[1]
+    assert len(batch_data) == 2
+
+    # Both should have same 'id'
+    assert batch_data[0]["id"] == "RxNorm:111"
+    assert batch_data[1]["id"] == "RxNorm:111"
+
+    # Properties should differ
+    assert batch_data[0]["label"] == "Tylenol"
+    assert batch_data[1]["label"] == "Paracetamol"
+
+    # In a real Neo4j UNWIND batch, the second one will overwrite the first's properties
+    # if they are processed in order. This confirms the logic prepares the data correctly
+    # for that behavior.
+
+
+def test_ingest_entities_duplicate_updates(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test duplicate rows for same ID in the stream."""
+    data: dict[str, list[dict[str, Any]]] = {
+        "drugs": [
+            {"drug_id": "1", "name": "V1", "type": "A"},
+            {"drug_id": "1", "name": "V2", "type": "B"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    # Resolver behaves as identity if not found
+    resolver = MockOntologyResolver({})
+
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+    engine.ingest_entities(sample_manifest, adapter, graph_job)
+
+    args, _ = mock_neo4j_client.merge_nodes.call_args
+    batch_data = args[1]
+
+    # Should contain both records with same ID
+    assert len(batch_data) == 2
+    assert batch_data[0]["id"] == "1"
+    assert batch_data[0]["label"] == "V1"
+    assert batch_data[1]["id"] == "1"
+    assert batch_data[1]["label"] == "V2"
+
+
+def test_ingest_entities_null_properties(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test handling of None/Null values in properties."""
+    data: dict[str, list[dict[str, Any]]] = {
+        "drugs": [
+            {"drug_id": "1", "name": "Valid", "type": None},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
+    engine.ingest_entities(sample_manifest, adapter, graph_job)
+
+    args, _ = mock_neo4j_client.merge_nodes.call_args
+    batch_data = args[1]
+
+    # Verify None is propagated to the dictionary
+    # Neo4j client/driver handles None by removing the property or setting to NULL
+    assert batch_data[0]["category"] is None
+    assert batch_data[0]["label"] == "Valid"
+
+
+def test_ingest_entities_special_characters(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test strings with special characters."""
+    special_name = "Drug \"with\" 'quotes' & \n newlines \U0001f600"
+    data: dict[str, list[dict[str, Any]]] = {
+        "drugs": [
+            {"drug_id": "special", "name": special_name, "type": "Test"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
+    engine.ingest_entities(sample_manifest, adapter, graph_job)
+
+    args, _ = mock_neo4j_client.merge_nodes.call_args
+    batch_data = args[1]
+
+    assert batch_data[0]["label"] == special_name
+
+
+def test_ingest_entities_list_properties(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test properties that are lists (e.g., tags)."""
+    # Note: PropertyMapping assumes simple source->target string.
+    # But if source value is a list, it should pass through.
+    data: dict[str, list[dict[str, Any]]] = {
+        "drugs": [
+            {"drug_id": "1", "name": ["Alias1", "Alias2"], "type": "Test"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
+    engine.ingest_entities(sample_manifest, adapter, graph_job)
+
+    args, _ = mock_neo4j_client.merge_nodes.call_args
+    batch_data = args[1]
+
+    assert batch_data[0]["label"] == ["Alias1", "Alias2"]
