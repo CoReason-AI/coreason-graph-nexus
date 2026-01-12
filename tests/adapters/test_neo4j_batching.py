@@ -147,3 +147,169 @@ def test_batch_write_partial_failure(client: Neo4jClient, mock_driver: MagicMock
 
     # Should have attempted 2 calls, not 3
     assert mock_driver.execute_query.call_count == 2
+
+
+# --- Tests for merge_nodes ---
+
+
+def test_merge_nodes_query_construction(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that merge_nodes constructs the correct Cypher query."""
+    data = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
+
+    client.merge_nodes(label="Person", data=data, merge_keys=["id"], batch_size=100)
+
+    expected_query = "UNWIND $batch AS row MERGE (n:`Person` { `id`: row.`id` }) SET n += row"
+
+    mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
+
+
+def test_merge_nodes_multiple_keys(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test merge_nodes with multiple composite keys."""
+    data = [{"firstName": "Alice", "lastName": "Smith"}]
+
+    client.merge_nodes(label="Person", data=data, merge_keys=["firstName", "lastName"])
+
+    expected_query = (
+        "UNWIND $batch AS row "
+        "MERGE (n:`Person` { `firstName`: row.`firstName`, `lastName`: row.`lastName` }) "
+        "SET n += row"
+    )
+
+    mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
+
+
+def test_merge_nodes_no_keys_raises(client: Neo4jClient) -> None:
+    """Test that calling merge_nodes without keys raises ValueError."""
+    with pytest.raises(ValueError, match="merge_keys must not be empty"):
+        client.merge_nodes("Person", [{"id": 1}], [])
+
+
+# --- Tests for merge_relationships ---
+
+
+def test_merge_relationships_query_construction(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that merge_relationships constructs the correct Cypher query with separated keys and properties."""
+    data = [{"start_ref": 1, "end_ref": 2, "weight": 0.5}]
+
+    client.merge_relationships(
+        start_label="Person",
+        start_data_key="start_ref",
+        end_label="Company",
+        end_data_key="end_ref",
+        rel_type="WORKS_FOR",
+        data=data,
+        start_node_prop="id",  # explicitly using default just to be clear
+        end_node_prop="id",
+        batch_size=100,
+    )
+
+    expected_query = (
+        "UNWIND $batch AS row "
+        "MATCH (source:`Person` { `id`: row.`start_ref` }) "
+        "MATCH (target:`Company` { `id`: row.`end_ref` }) "
+        "MERGE (source)-[r:`WORKS_FOR`]->(target) "
+        "SET r += row"
+    )
+
+    mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
+
+
+def test_merge_relationships_custom_props(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test merge_relationships with custom node properties (not 'id')."""
+    data = [{"u_uuid": "abc", "c_code": "xyz"}]
+
+    client.merge_relationships(
+        start_label="User",
+        start_data_key="u_uuid",
+        end_label="Country",
+        end_data_key="c_code",
+        rel_type="LIVES_IN",
+        data=data,
+        start_node_prop="uuid",
+        end_node_prop="iso_code",
+    )
+
+    expected_query = (
+        "UNWIND $batch AS row "
+        "MATCH (source:`User` { `uuid`: row.`u_uuid` }) "
+        "MATCH (target:`Country` { `iso_code`: row.`c_code` }) "
+        "MERGE (source)-[r:`LIVES_IN`]->(target) "
+        "SET r += row"
+    )
+
+    mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
+
+
+def test_merge_relationships_empty_data(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that merge_relationships handles empty data gracefully."""
+    client.merge_relationships("A", "k", "B", "k", "REL", [], batch_size=100)
+    mock_driver.execute_query.assert_not_called()
+
+
+# --- Edge Case & Complex Scenario Tests ---
+
+
+def test_merge_nodes_escaping(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that labels and keys with spaces/special chars are escaped with backticks."""
+    data = [{"User Group": "Admins", "Full Name": "Admin User"}]
+
+    client.merge_nodes(label="User Group", data=data, merge_keys=["Full Name"], batch_size=10)
+
+    expected_query = "UNWIND $batch AS row MERGE (n:`User Group` { `Full Name`: row.`Full Name` }) SET n += row"
+
+    mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
+
+
+def test_merge_relationships_escaping(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that relationship types and labels with special chars are escaped."""
+    data = [{"s": 1, "e": 2}]
+
+    client.merge_relationships(
+        start_label="Start Node",
+        start_data_key="key-1",
+        end_label="End Node",
+        end_data_key="key-2",
+        rel_type="HAS CONNECTION",
+        data=data,
+        start_node_prop="id",
+        end_node_prop="id",
+    )
+
+    expected_query = (
+        "UNWIND $batch AS row "
+        "MATCH (source:`Start Node` { `id`: row.`key-1` }) "
+        "MATCH (target:`End Node` { `id`: row.`key-2` }) "
+        "MERGE (source)-[r:`HAS CONNECTION`]->(target) "
+        "SET r += row"
+    )
+
+    mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
+
+
+def test_merge_nodes_complex_properties(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that complex property types (lists, nested dicts) are passed correctly."""
+    complex_data = [
+        {"id": 1, "tags": ["a", "b", "c"], "metadata": {"created": "today", "author": "me"}, "scores": [0.1, 0.9]}
+    ]
+
+    client.merge_nodes(label="Item", data=complex_data, merge_keys=["id"])
+
+    # Verify the query structure is standard
+    expected_query = "UNWIND $batch AS row MERGE (n:`Item` { `id`: row.`id` }) SET n += row"
+
+    # Verify the complex data was passed in the parameters
+    mock_driver.execute_query.assert_called_once_with(
+        expected_query, parameters_={"batch": complex_data}, database_="neo4j"
+    )
+
+
+def test_merge_nodes_empty_data_does_not_error(client: Neo4jClient, mock_driver: MagicMock) -> None:
+    """Test that calling merge_nodes with empty data list does not raise error."""
+    client.merge_nodes(label="Person", data=[], merge_keys=["id"])
+    mock_driver.execute_query.assert_not_called()
+
+
+def test_merge_nodes_empty_data_invalid_keys(client: Neo4jClient) -> None:
+    """Test that invalid keys raise error even if data is empty (validation first)."""
+    with pytest.raises(ValueError, match="merge_keys must not be empty"):
+        client.merge_nodes("Person", [], [])
