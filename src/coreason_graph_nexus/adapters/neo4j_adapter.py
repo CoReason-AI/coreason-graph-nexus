@@ -157,3 +157,79 @@ class Neo4jClient:
                 raise
 
         logger.info(f"Batch write completed: {total} records processed.")
+
+    def merge_nodes(
+        self,
+        label: str,
+        data: list[dict[str, Any]],
+        merge_keys: list[str],
+        batch_size: int = 10000,
+    ) -> None:
+        """
+        Ingests nodes using an idempotent MERGE operation in batches.
+
+        Constructs a Cypher query that unwinds the data batch and MERGEs nodes
+        based on the provided `merge_keys`. All other properties in the data
+        dictionary are set on the node using `SET n += row`.
+
+        Args:
+            label: The primary label for the nodes (e.g., "Person").
+            data: A list of dictionaries containing node properties.
+            merge_keys: A list of property keys used to uniquely identify the node
+                        (e.g., ["id"] or ["firstName", "lastName"]).
+            batch_size: The number of records to process per transaction.
+        """
+        if not merge_keys:
+            raise ValueError("merge_keys must not be empty.")
+
+        # Construct the property map for the MERGE clause
+        # e.g., { `id`: row.`id`, `name`: row.`name` }
+        # We wrap keys in backticks to handle special characters.
+        merge_props_str = ", ".join([f"`{key}`: row.`{key}`" for key in merge_keys])
+
+        # Wrap label in backticks as well
+        query = f"UNWIND $batch AS row MERGE (n:`{label}` {{ {merge_props_str} }}) SET n += row"
+
+        logger.info(f"Merging nodes (Label: {label}) using keys: {merge_keys}")
+        self.batch_write(query, data, batch_size=batch_size)
+
+    def merge_relationships(
+        self,
+        start_label: str,
+        start_data_key: str,
+        end_label: str,
+        end_data_key: str,
+        rel_type: str,
+        data: list[dict[str, Any]],
+        start_node_prop: str = "id",
+        end_node_prop: str = "id",
+        batch_size: int = 10000,
+    ) -> None:
+        """
+        Ingests relationships using an idempotent MERGE operation in batches.
+
+        Constructs a Cypher query that unwinds the data batch, MATCHes the start
+        and end nodes using their respective keys, and then MERGEs the relationship.
+        Properties from the data dictionary are set on the relationship.
+
+        Args:
+            start_label: The label of the start node.
+            start_data_key: The key in the input `data` dictionary that contains the start node identifier.
+            end_label: The label of the end node.
+            end_data_key: The key in the input `data` dictionary that contains the end node identifier.
+            rel_type: The relationship type (e.g., "KNOWS").
+            data: A list of dictionaries.
+            start_node_prop: The property name on the start node to match against (default: "id").
+            end_node_prop: The property name on the end node to match against (default: "id").
+            batch_size: The number of records to process per transaction.
+        """
+        query = (
+            f"UNWIND $batch AS row "
+            f"MATCH (source:`{start_label}` {{ `{start_node_prop}`: row.`{start_data_key}` }}) "
+            f"MATCH (target:`{end_label}` {{ `{end_node_prop}`: row.`{end_data_key}` }}) "
+            f"MERGE (source)-[r:`{rel_type}`]->(target) "
+            f"SET r += row"
+        )
+
+        logger.info(f"Merging relationships ({start_label})-[{rel_type}]->({end_label})")
+        self.batch_write(query, data, batch_size=batch_size)
