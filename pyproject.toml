@@ -14,6 +14,7 @@ pydantic = "^2.12.5"
 pyyaml = "^6.0.3"
 neo4j = "^6.0.3"
 redis = "^7.1.0"
+networkx = "^3.2.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.2"
