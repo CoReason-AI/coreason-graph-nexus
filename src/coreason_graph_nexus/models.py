@@ -8,6 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from enum import Enum
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -202,3 +203,37 @@ class GraphJob(BaseModel):
             if value < 0:
                 raise ValueError(f"Metric '{key}' cannot be negative (got {value})")
         return self
+
+
+class AnalysisAlgo(str, Enum):
+    """
+    Enumeration of supported graph analysis algorithms.
+    """
+
+    PAGERANK = "pagerank"
+    SHORTEST_PATH = "shortest_path"
+    LOUVAIN = "louvain"
+
+
+class GraphAnalysisRequest(BaseModel):
+    """
+    Request object for running graph analysis algorithms.
+
+    Attributes:
+        center_node_id: The ID of the center node for subgraph projection.
+        target_node_id: The ID of the target node (required for shortest path).
+        algorithm: The algorithm to run.
+        depth: The depth of the subgraph projection (K-Hops).
+        write_property: The property key to write results back to (for PageRank/Louvain).
+    """
+
+    center_node_id: str = Field(description="The ID of the center node for subgraph projection.")
+    target_node_id: str | None = Field(
+        default=None, description="The ID of the target node (required for shortest path)."
+    )
+    algorithm: AnalysisAlgo = Field(description="The algorithm to run.")
+    depth: int = Field(default=2, ge=1, description="The depth of the subgraph projection (K-Hops).")
+    write_property: str = Field(
+        default="pagerank_score",
+        description="The property key to write results back to (for PageRank/Louvain).",
+    )
