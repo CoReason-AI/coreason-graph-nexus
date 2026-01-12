@@ -311,3 +311,108 @@ def test_to_networkx_failure(mock_driver: MagicMock) -> None:
 
     with pytest.raises(Exception, match="DB Error"):
         client.to_networkx("MATCH (n) RETURN n")
+
+
+# --- Additional Edge Cases & Complex Scenarios ---
+
+
+def test_to_networkx_mixed_content_and_nulls(mock_driver: MagicMock) -> None:
+    """Test converting mixed content (nodes, scalars, None) where scalars/None should be ignored."""
+    driver_instance = mock_driver.return_value
+
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+    ):
+        node = MockNode("n1", ["Label"], {"p": 1})
+        rel = MockRelationship("r1", "REL", node, node, {})  # Self loop for convenience
+
+        # Row contains: Node, Integer, None, String, Relationship
+        mock_record = MagicMock()
+        mock_record.values.return_value = [node, 123, None, "test", rel]
+
+        driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH (n)-[r]-(m) RETURN n, count(*), r")
+
+        assert len(g.nodes) == 1
+        assert len(g.edges) == 1
+        assert "n1" in g.nodes
+        assert g.has_edge("n1", "n1")
+
+
+def test_to_networkx_cycles_and_self_loops(mock_driver: MagicMock) -> None:
+    """Test handling of cycles (A->B->A) and self-loops (A->A)."""
+    driver_instance = mock_driver.return_value
+
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+    ):
+        # A <-> B Cycle
+        node_a = MockNode("A", [], {})
+        node_b = MockNode("B", [], {})
+        rel_ab = MockRelationship("r1", "TO", node_a, node_b, {})
+        rel_ba = MockRelationship("r2", "BACK", node_b, node_a, {})
+
+        # Self loop C -> C
+        node_c = MockNode("C", [], {})
+        rel_cc = MockRelationship("r3", "SELF", node_c, node_c, {})
+
+        mock_record_1 = MagicMock()
+        mock_record_1.values.return_value = [node_a, rel_ab, node_b]
+
+        mock_record_2 = MagicMock()
+        mock_record_2.values.return_value = [node_b, rel_ba, node_a]
+
+        mock_record_3 = MagicMock()
+        mock_record_3.values.return_value = [node_c, rel_cc]
+
+        driver_instance.execute_query.return_value = ([mock_record_1, mock_record_2, mock_record_3], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH paths")
+
+        # Verify A <-> B
+        assert g.has_edge("A", "B")
+        assert g.has_edge("B", "A")
+        assert g.edges["A", "B"]["type"] == "TO"
+        assert g.edges["B", "A"]["type"] == "BACK"
+
+        # Verify C -> C
+        assert g.has_edge("C", "C")
+        assert g.edges["C", "C"]["type"] == "SELF"
+
+
+def test_to_networkx_idempotency_and_updates(mock_driver: MagicMock) -> None:
+    """Test that later occurrences of a node in the stream update its properties."""
+    driver_instance = mock_driver.return_value
+
+    with patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode):
+        # First occurrence: property 'a'=1
+        node_v1 = MockNode("n1", ["L"], {"a": 1})
+        # Second occurrence: property 'b'=2 (simulating merge or updated state in stream)
+        node_v2 = MockNode("n1", ["L"], {"b": 2})
+
+        rec1 = MagicMock()
+        rec1.values.return_value = [node_v1]
+        rec2 = MagicMock()
+        rec2.values.return_value = [node_v2]
+
+        driver_instance.execute_query.return_value = ([rec1, rec2], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("...")
+
+        assert len(g.nodes) == 1
+        assert "n1" in g.nodes
+        # NetworkX should merge attributes if add_node is called twice
+        # Wait, if I call add_node(id, attr=val), it updates/adds that attr.
+        # But if the second call does NOT have 'a', does it remove 'a'? No.
+        # So expected result is {'a': 1, 'b': 2, 'labels': ['L']}
+
+        attrs = g.nodes["n1"]
+        assert attrs["a"] == 1
+        assert attrs["b"] == 2
+        assert attrs["labels"] == ["L"]
