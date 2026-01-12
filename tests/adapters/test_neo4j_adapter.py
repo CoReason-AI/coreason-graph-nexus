@@ -12,6 +12,7 @@ from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import networkx as nx
 import pytest
 from neo4j.exceptions import ServiceUnavailable
 
@@ -181,3 +182,264 @@ def test_connection_failure_during_query(mock_driver: MagicMock) -> None:
 
     with pytest.raises(ServiceUnavailable, match="Connection dropped"):
         client.execute_query("MATCH (n) RETURN n")
+
+
+# --- Tests for to_networkx ---
+
+
+class MockNode:
+    """Dummy class to replace neo4j.graph.Node in tests."""
+
+    def __init__(self, element_id: str, labels: list[str], properties: dict[str, Any]) -> None:
+        self.element_id = element_id
+        self.labels = labels
+        self.properties = properties
+
+    def items(self) -> Any:
+        return self.properties.items()
+
+
+class MockRelationship:
+    """Dummy class to replace neo4j.graph.Relationship in tests."""
+
+    def __init__(
+        self, element_id: str, type_: str, start_node: MockNode, end_node: MockNode, properties: dict[str, Any]
+    ) -> None:
+        self.element_id = element_id
+        self.type = type_
+        self.start_node = start_node
+        self.end_node = end_node
+        self.properties = properties
+
+    def items(self) -> Any:
+        return self.properties.items()
+
+
+class MockPath:
+    """Dummy class to replace neo4j.graph.Path in tests."""
+
+    def __init__(self, nodes: list[MockNode], relationships: list[MockRelationship]) -> None:
+        self.nodes = nodes
+        self.relationships = relationships
+
+
+def test_to_networkx_nodes_and_relationships(mock_driver: MagicMock) -> None:
+    """Test converting Neo4j results to NetworkX graph."""
+    driver_instance = mock_driver.return_value
+
+    # Patch the types in the module so isinstance() works
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+    ):
+        node_a = MockNode("node1", ["Person"], {"name": "Alice"})
+        node_b = MockNode("node2", ["Person"], {"name": "Bob"})
+        rel = MockRelationship("rel1", "KNOWS", node_a, node_b, {"since": 2022})
+
+        mock_record = MagicMock()
+        mock_record.values.return_value = [node_a, rel, node_b]
+
+        driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH (a)-[r]->(b) RETURN a, r, b")
+
+        assert isinstance(g, nx.DiGraph)
+        assert len(g.nodes) == 2
+        assert len(g.edges) == 1
+
+        assert g.nodes["node1"]["name"] == "Alice"
+        assert g.nodes["node1"]["labels"] == ["Person"]
+
+        assert g.nodes["node2"]["name"] == "Bob"
+
+        assert g.has_edge("node1", "node2")
+        assert g.edges["node1", "node2"]["type"] == "KNOWS"
+        assert g.edges["node1", "node2"]["since"] == 2022
+
+
+def test_to_networkx_path(mock_driver: MagicMock) -> None:
+    """Test converting a Neo4j Path to NetworkX."""
+    driver_instance = mock_driver.return_value
+
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Path", new=MockPath),
+    ):
+        node_a = MockNode("n1", ["A"], {})
+        node_b = MockNode("n2", ["B"], {})
+        rel = MockRelationship("r1", "LINK", node_a, node_b, {})
+        path = MockPath([node_a, node_b], [rel])
+
+        mock_record = MagicMock()
+        mock_record.values.return_value = [path]
+        driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH p=(a)-[]-(b) RETURN p")
+
+        assert len(g.nodes) == 2
+        assert len(g.edges) == 1
+        assert g.has_edge("n1", "n2")
+
+
+def test_to_networkx_list_of_nodes(mock_driver: MagicMock) -> None:
+    """Test converting a list of nodes (e.g., collect(n)) to NetworkX."""
+    driver_instance = mock_driver.return_value
+
+    with patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode):
+        node = MockNode("n1", [], {})
+
+        mock_record = MagicMock()
+        mock_record.values.return_value = [[node]]  # A list containing a node
+        driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH (n) RETURN collect(n)")
+
+        assert len(g.nodes) == 1
+        assert "n1" in g.nodes
+
+
+def test_to_networkx_failure(mock_driver: MagicMock) -> None:
+    """Test failure handling in to_networkx."""
+    driver_instance = mock_driver.return_value
+    driver_instance.execute_query.side_effect = Exception("DB Error")
+
+    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+
+    with pytest.raises(Exception, match="DB Error"):
+        client.to_networkx("MATCH (n) RETURN n")
+
+
+# --- Additional Edge Cases & Complex Scenarios ---
+
+
+def test_to_networkx_mixed_content_and_nulls(mock_driver: MagicMock) -> None:
+    """Test converting mixed content (nodes, scalars, None) where scalars/None should be ignored."""
+    driver_instance = mock_driver.return_value
+
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+    ):
+        node = MockNode("n1", ["Label"], {"p": 1})
+        rel = MockRelationship("r1", "REL", node, node, {})  # Self loop for convenience
+
+        # Row contains: Node, Integer, None, String, Relationship
+        mock_record = MagicMock()
+        mock_record.values.return_value = [node, 123, None, "test", rel]
+
+        driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH (n)-[r]-(m) RETURN n, count(*), r")
+
+        assert len(g.nodes) == 1
+        assert len(g.edges) == 1
+        assert "n1" in g.nodes
+        assert g.has_edge("n1", "n1")
+
+
+def test_to_networkx_cycles_and_self_loops(mock_driver: MagicMock) -> None:
+    """Test handling of cycles (A->B->A) and self-loops (A->A)."""
+    driver_instance = mock_driver.return_value
+
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+    ):
+        # A <-> B Cycle
+        node_a = MockNode("A", [], {})
+        node_b = MockNode("B", [], {})
+        rel_ab = MockRelationship("r1", "TO", node_a, node_b, {})
+        rel_ba = MockRelationship("r2", "BACK", node_b, node_a, {})
+
+        # Self loop C -> C
+        node_c = MockNode("C", [], {})
+        rel_cc = MockRelationship("r3", "SELF", node_c, node_c, {})
+
+        mock_record_1 = MagicMock()
+        mock_record_1.values.return_value = [node_a, rel_ab, node_b]
+
+        mock_record_2 = MagicMock()
+        mock_record_2.values.return_value = [node_b, rel_ba, node_a]
+
+        mock_record_3 = MagicMock()
+        mock_record_3.values.return_value = [node_c, rel_cc]
+
+        driver_instance.execute_query.return_value = ([mock_record_1, mock_record_2, mock_record_3], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH paths")
+
+        # Verify A <-> B
+        assert g.has_edge("A", "B")
+        assert g.has_edge("B", "A")
+        assert g.edges["A", "B"]["type"] == "TO"
+        assert g.edges["B", "A"]["type"] == "BACK"
+
+        # Verify C -> C
+        assert g.has_edge("C", "C")
+        assert g.edges["C", "C"]["type"] == "SELF"
+
+
+def test_to_networkx_idempotency_and_updates(mock_driver: MagicMock) -> None:
+    """Test that later occurrences of a node in the stream update its properties."""
+    driver_instance = mock_driver.return_value
+
+    with patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode):
+        # First occurrence: property 'a'=1
+        node_v1 = MockNode("n1", ["L"], {"a": 1})
+        # Second occurrence: property 'b'=2 (simulating merge or updated state in stream)
+        node_v2 = MockNode("n1", ["L"], {"b": 2})
+
+        rec1 = MagicMock()
+        rec1.values.return_value = [node_v1]
+        rec2 = MagicMock()
+        rec2.values.return_value = [node_v2]
+
+        driver_instance.execute_query.return_value = ([rec1, rec2], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("...")
+
+        assert len(g.nodes) == 1
+        assert "n1" in g.nodes
+        # NetworkX should merge attributes if add_node is called twice
+        # Wait, if I call add_node(id, attr=val), it updates/adds that attr.
+        # But if the second call does NOT have 'a', does it remove 'a'? No.
+        # So expected result is {'a': 1, 'b': 2, 'labels': ['L']}
+
+        attrs = g.nodes["n1"]
+        assert attrs["a"] == 1
+        assert attrs["b"] == 2
+        assert attrs["labels"] == ["L"]
+
+
+def test_to_networkx_list_of_mixed_types(mock_driver: MagicMock) -> None:
+    """Test converting a list of mixed types (Nodes, Relationships, others)."""
+    driver_instance = mock_driver.return_value
+
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+    ):
+        node = MockNode("n1", [], {})
+        # Note: Relationship requires start/end nodes in the constructor
+        rel = MockRelationship("r1", "REL", node, node, {})
+
+        # List containing a node, a relationship, and an integer (which should be ignored)
+        mixed_list = [node, rel, 123]
+
+        mock_record = MagicMock()
+        mock_record.values.return_value = [mixed_list]
+        driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH (n)-[r]-(m) RETURN collect([n, r])")
+
+        assert len(g.nodes) == 1
+        assert "n1" in g.nodes
+        assert g.has_edge("n1", "n1")
