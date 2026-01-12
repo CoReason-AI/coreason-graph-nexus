@@ -13,8 +13,9 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 from neo4j.exceptions import ServiceUnavailable
+
+from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 
 
 @pytest.fixture

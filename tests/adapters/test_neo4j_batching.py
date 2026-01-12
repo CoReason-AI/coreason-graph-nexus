@@ -12,9 +12,10 @@ from typing import Any
 from unittest.mock import MagicMock, call
 
 import pytest
-from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 from neo4j.exceptions import ServiceUnavailable
 from pytest_mock import MockerFixture
+
+from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 
 
 @pytest.fixture
@@ -157,7 +158,7 @@ def test_merge_nodes_query_construction(client: Neo4jClient, mock_driver: MagicM
 
     client.merge_nodes(label="Person", data=data, merge_keys=["id"], batch_size=100)
 
-    expected_query = "UNWIND $batch AS row " "MERGE (n:`Person` { `id`: row.`id` }) " "SET n += row"
+    expected_query = "UNWIND $batch AS row MERGE (n:`Person` { `id`: row.`id` }) SET n += row"
 
     mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
 
@@ -254,7 +255,7 @@ def test_merge_nodes_escaping(client: Neo4jClient, mock_driver: MagicMock) -> No
 
     client.merge_nodes(label="User Group", data=data, merge_keys=["Full Name"], batch_size=10)
 
-    expected_query = "UNWIND $batch AS row " "MERGE (n:`User Group` { `Full Name`: row.`Full Name` }) " "SET n += row"
+    expected_query = "UNWIND $batch AS row MERGE (n:`User Group` { `Full Name`: row.`Full Name` }) SET n += row"
 
     mock_driver.execute_query.assert_called_once_with(expected_query, parameters_={"batch": data}, database_="neo4j")
 
@@ -294,7 +295,7 @@ def test_merge_nodes_complex_properties(client: Neo4jClient, mock_driver: MagicM
     client.merge_nodes(label="Item", data=complex_data, merge_keys=["id"])
 
     # Verify the query structure is standard
-    expected_query = "UNWIND $batch AS row " "MERGE (n:`Item` { `id`: row.`id` }) " "SET n += row"
+    expected_query = "UNWIND $batch AS row MERGE (n:`Item` { `id`: row.`id` }) SET n += row"
 
     # Verify the complex data was passed in the parameters
     mock_driver.execute_query.assert_called_once_with(

@@ -188,7 +188,7 @@ class Neo4jClient:
         merge_props_str = ", ".join([f"`{key}`: row.`{key}`" for key in merge_keys])
 
         # Wrap label in backticks as well
-        query = f"UNWIND $batch AS row " f"MERGE (n:`{label}` {{ {merge_props_str} }}) " f"SET n += row"
+        query = f"UNWIND $batch AS row MERGE (n:`{label}` {{ {merge_props_str} }}) SET n += row"
 
         logger.info(f"Merging nodes (Label: {label}) using keys: {merge_keys}")
         self.batch_write(query, data, batch_size=batch_size)
