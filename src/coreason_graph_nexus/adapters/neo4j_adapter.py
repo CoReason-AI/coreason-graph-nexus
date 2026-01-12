@@ -183,10 +183,12 @@ class Neo4jClient:
             raise ValueError("merge_keys must not be empty.")
 
         # Construct the property map for the MERGE clause
-        # e.g., { id: row.id, name: row.name }
-        merge_props_str = ", ".join([f"{key}: row.{key}" for key in merge_keys])
+        # e.g., { `id`: row.`id`, `name`: row.`name` }
+        # We wrap keys in backticks to handle special characters.
+        merge_props_str = ", ".join([f"`{key}`: row.`{key}`" for key in merge_keys])
 
-        query = f"UNWIND $batch AS row " f"MERGE (n:{label} {{ {merge_props_str} }}) " f"SET n += row"
+        # Wrap label in backticks as well
+        query = f"UNWIND $batch AS row " f"MERGE (n:`{label}` {{ {merge_props_str} }}) " f"SET n += row"
 
         logger.info(f"Merging nodes (Label: {label}) using keys: {merge_keys}")
         self.batch_write(query, data, batch_size=batch_size)
@@ -194,11 +196,13 @@ class Neo4jClient:
     def merge_relationships(
         self,
         start_label: str,
-        start_key: str,
+        start_data_key: str,
         end_label: str,
-        end_key: str,
+        end_data_key: str,
         rel_type: str,
         data: list[dict[str, Any]],
+        start_node_prop: str = "id",
+        end_node_prop: str = "id",
         batch_size: int = 10000,
     ) -> None:
         """
@@ -210,19 +214,20 @@ class Neo4jClient:
 
         Args:
             start_label: The label of the start node.
-            start_key: The property key on the start node used for matching (found in input data).
+            start_data_key: The key in the input `data` dictionary that contains the start node identifier.
             end_label: The label of the end node.
-            end_key: The property key on the end node used for matching (found in input data).
+            end_data_key: The key in the input `data` dictionary that contains the end node identifier.
             rel_type: The relationship type (e.g., "KNOWS").
-            data: A list of dictionaries. Each dict must contain values for `start_key`
-                  and `end_key`, plus any relationship properties.
+            data: A list of dictionaries.
+            start_node_prop: The property name on the start node to match against (default: "id").
+            end_node_prop: The property name on the end node to match against (default: "id").
             batch_size: The number of records to process per transaction.
         """
         query = (
             f"UNWIND $batch AS row "
-            f"MATCH (source:{start_label} {{ {start_key}: row.{start_key} }}) "
-            f"MATCH (target:{end_label} {{ {end_key}: row.{end_key} }}) "
-            f"MERGE (source)-[r:{rel_type}]->(target) "
+            f"MATCH (source:`{start_label}` {{ `{start_node_prop}`: row.`{start_data_key}` }}) "
+            f"MATCH (target:`{end_label}` {{ `{end_node_prop}`: row.`{end_data_key}` }}) "
+            f"MERGE (source)-[r:`{rel_type}`]->(target) "
             f"SET r += row"
         )
 
