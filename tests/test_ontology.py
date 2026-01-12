@@ -158,3 +158,65 @@ class TestRedisOntologyResolver:
         client = CodexClient()
         result = client.lookup_concept("Something")
         assert result is None
+
+    def test_resolve_special_characters(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+        """
+        Test that terms with special characters are handled correctly in Redis keys.
+        """
+        mock_redis.get.return_value = None
+        mock_codex_client.lookup_concept.return_value = "ID:123"
+
+        resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
+        term = "Drug A + B (Old)"
+
+        result = resolver.resolve(term)
+
+        assert result == "ID:123"
+        # The key should preserve the term exactly
+        mock_redis.get.assert_called_once_with("resolve:Drug A + B (Old)")
+        mock_redis.setex.assert_called_once_with("resolve:Drug A + B (Old)", 86400, "ID:123")
+
+    def test_empty_string_input(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+        """
+        Test behavior with empty string input.
+        """
+        mock_redis.get.return_value = None
+        mock_codex_client.lookup_concept.return_value = None
+
+        resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
+        result = resolver.resolve("")
+
+        assert result is None
+        mock_redis.get.assert_called_once_with("resolve:")
+
+    def test_codex_exception_propagation(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+        """
+        Test that exceptions raised by the backend (Codex) are propagated.
+        """
+        mock_redis.get.return_value = None
+        mock_codex_client.lookup_concept.side_effect = ValueError("Backend Error")
+
+        resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
+
+        with pytest.raises(ValueError, match="Backend Error"):
+            resolver.resolve("Term")
+
+        # Should not have tried to cache anything
+        mock_redis.setex.assert_not_called()
+
+    def test_redis_returns_non_bytes(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+        """
+        Test handling when Redis returns a non-bytes object (e.g., str or int).
+        """
+        # Scenario 1: Redis returns a string (already decoded)
+        mock_redis.get.return_value = "RxNorm:789"
+
+        resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
+        result = resolver.resolve("DrugX")
+
+        assert result == "RxNorm:789"
+
+        # Scenario 2: Redis returns an integer (unlikely but robust code should handle it)
+        mock_redis.get.return_value = 12345
+        result = resolver.resolve("DrugY")
+        assert result == "12345"
