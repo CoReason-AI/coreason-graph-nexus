@@ -416,3 +416,30 @@ def test_to_networkx_idempotency_and_updates(mock_driver: MagicMock) -> None:
         assert attrs["a"] == 1
         assert attrs["b"] == 2
         assert attrs["labels"] == ["L"]
+
+
+def test_to_networkx_list_of_mixed_types(mock_driver: MagicMock) -> None:
+    """Test converting a list of mixed types (Nodes, Relationships, others)."""
+    driver_instance = mock_driver.return_value
+
+    with (
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MockNode),
+        patch("coreason_graph_nexus.adapters.neo4j_adapter.Relationship", new=MockRelationship),
+    ):
+        node = MockNode("n1", [], {})
+        # Note: Relationship requires start/end nodes in the constructor
+        rel = MockRelationship("r1", "REL", node, node, {})
+
+        # List containing a node, a relationship, and an integer (which should be ignored)
+        mixed_list = [node, rel, 123]
+
+        mock_record = MagicMock()
+        mock_record.values.return_value = [mixed_list]
+        driver_instance.execute_query.return_value = ([mock_record], None, None)
+
+        client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+        g = client.to_networkx("MATCH (n)-[r]-(m) RETURN collect([n, r])")
+
+        assert len(g.nodes) == 1
+        assert "n1" in g.nodes
+        assert g.has_edge("n1", "n1")
