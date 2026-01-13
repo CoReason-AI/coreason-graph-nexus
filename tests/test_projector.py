@@ -252,7 +252,7 @@ def test_ingest_relationships_missing_keys(
     sample_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
-    data = {
+    data: dict[str, list[dict[str, Any]]] = {
         "treatments": [
             {"drug_ref": "1001", "disease_ref": "D01"},
             {"evidence": "Bad Row"},  # Missing keys
@@ -593,7 +593,7 @@ def test_ingest_relationships_empty_keys_and_type_coercion(
     graph_job: GraphJob,
 ) -> None:
     """Test skipping of empty/None keys and handling of integer keys."""
-    data = {
+    data: dict[str, list[dict[str, Any]]] = {
         "treatments": [
             {"drug_ref": 123, "disease_ref": "Valid"},  # Int key
             {"drug_ref": "", "disease_ref": "Valid"},  # Empty start -> Skip
