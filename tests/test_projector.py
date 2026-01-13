@@ -639,3 +639,39 @@ def test_ingest_relationships_batching(
     # 3 batches (10, 10, 5)
     assert mock_neo4j_client.merge_relationships.call_count == 3
     assert graph_job.metrics["edges_created"] == 25.0
+
+
+def test_ingest_relationships_residual_flush(
+    mock_neo4j_client: MagicMock,
+    mock_resolver: MockOntologyResolver,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Verify that a small batch that doesn't trigger the loop flush is flushed at the end."""
+    # 3 rows, batch size 10
+    data = {"treatments": [{"drug_ref": str(i), "disease_ref": f"D{i}"} for i in range(3)]}
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    engine = ProjectionEngine(mock_neo4j_client, mock_resolver)
+    engine.ingest_relationships(sample_manifest, adapter, graph_job, batch_size=10)
+
+    # Should be called once (at end)
+    assert mock_neo4j_client.merge_relationships.call_count == 1
+    assert graph_job.metrics["edges_created"] == 3.0
+
+
+def test_ingest_relationships_exception_handling(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Verify exception handling during relationship ingestion."""
+    # Adapter raises error
+    adapter = MagicMock(spec=SourceAdapter)
+    adapter.read_table.side_effect = Exception("Source DB Error")
+
+    engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
+
+    with pytest.raises(Exception, match="Source DB Error"):
+        engine.ingest_relationships(sample_manifest, adapter, graph_job)
