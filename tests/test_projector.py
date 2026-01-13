@@ -535,3 +535,107 @@ def test_ingest_entities_list_properties(
     batch_data = args[1]
 
     assert batch_data[0]["label"] == ["Alias1", "Alias2"]
+
+
+def test_ingest_relationships_mixed_resolution_states(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """
+    Test mixed resolution success/failure and self-loops.
+
+    Data:
+      - R1: Known -> Unknown (Start resolves, End misses)
+      - R2: Unknown -> Known (Start misses, End resolves)
+      - R3: Known -> Known (Start resolves, End resolves -> Self Loop if same ID)
+    """
+    data = {
+        "treatments": [
+            {"drug_ref": "Known", "disease_ref": "Unknown"},
+            {"drug_ref": "Unknown", "disease_ref": "Known"},
+            {"drug_ref": "Known", "disease_ref": "Known"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    # Resolver: "Known" -> "ID1"
+    resolver = MockOntologyResolver({"Known": "ID1"})
+
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+    engine.ingest_relationships(sample_manifest, adapter, graph_job)
+
+    # Metrics
+    assert graph_job.metrics["edges_created"] == 3.0
+    # R1 misses end, R2 misses start, R3 misses none. Total 2.
+    assert graph_job.metrics["ontology_misses"] == 2.0
+
+    kwargs = mock_neo4j_client.merge_relationships.call_args[1]
+    batch_data = kwargs["data"]
+
+    # R1: ID1 -> Unknown
+    assert batch_data[0]["drug_ref"] == "ID1"
+    assert batch_data[0]["disease_ref"] == "Unknown"
+
+    # R2: Unknown -> ID1
+    assert batch_data[1]["drug_ref"] == "Unknown"
+    assert batch_data[1]["disease_ref"] == "ID1"
+
+    # R3: ID1 -> ID1 (Self loop)
+    assert batch_data[2]["drug_ref"] == "ID1"
+    assert batch_data[2]["disease_ref"] == "ID1"
+
+
+def test_ingest_relationships_empty_keys_and_type_coercion(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test skipping of empty/None keys and handling of integer keys."""
+    data = {
+        "treatments": [
+            {"drug_ref": 123, "disease_ref": "Valid"},  # Int key
+            {"drug_ref": "", "disease_ref": "Valid"},  # Empty start -> Skip
+            {"drug_ref": "Valid", "disease_ref": None},  # None end -> Skip
+            {"drug_ref": "Valid", "disease_ref": ""},  # Empty end -> Skip
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    # Resolver: "123" -> "ID123", "Valid" -> "IDValid"
+    resolver = MockOntologyResolver({"123": "ID123", "Valid": "IDValid"})
+
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+    engine.ingest_relationships(sample_manifest, adapter, graph_job)
+
+    # Should only process the first one
+    assert graph_job.metrics["edges_created"] == 1.0
+
+    kwargs = mock_neo4j_client.merge_relationships.call_args[1]
+    batch_data = kwargs["data"]
+
+    assert len(batch_data) == 1
+    assert batch_data[0]["drug_ref"] == "ID123"
+    assert batch_data[0]["disease_ref"] == "IDValid"
+
+
+def test_ingest_relationships_batching(
+    mock_neo4j_client: MagicMock,
+    mock_resolver: MockOntologyResolver,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Verify batching for relationships."""
+    # 25 rows
+    data = {"treatments": [{"drug_ref": str(i), "disease_ref": f"D{i}"} for i in range(25)]}
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    engine = ProjectionEngine(mock_neo4j_client, mock_resolver)
+    engine.ingest_relationships(sample_manifest, adapter, graph_job, batch_size=10)
+
+    # 3 batches (10, 10, 5)
+    assert mock_neo4j_client.merge_relationships.call_count == 3
+    assert graph_job.metrics["edges_created"] == 25.0
