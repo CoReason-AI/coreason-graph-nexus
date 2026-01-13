@@ -17,7 +17,7 @@ import pytest
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
-from coreason_graph_nexus.models import Entity, GraphJob, ProjectionManifest, PropertyMapping
+from coreason_graph_nexus.models import Entity, GraphJob, ProjectionManifest, PropertyMapping, Relationship
 from coreason_graph_nexus.projector import ProjectionEngine
 
 # --- Mocks ---
@@ -75,6 +75,10 @@ def mock_adapter() -> MockSourceAdapter:
         "diseases": [
             {"code": "D01", "desc": "Headache"},
         ],
+        "treatments": [
+            {"drug_ref": "1001", "disease_ref": "D01", "evidence": "Strong"},
+            {"drug_ref": "1002", "disease_ref": "D01", "evidence": "Medium"},
+        ],
         "empty_table": [],
     }
     adapter = MockSourceAdapter(data)
@@ -84,27 +88,58 @@ def mock_adapter() -> MockSourceAdapter:
 
 @pytest.fixture
 def mock_resolver() -> MockOntologyResolver:
-    return MockOntologyResolver({"1001": "RxNorm:111", "1002": "RxNorm:222"})
+    return MockOntologyResolver({"1001": "RxNorm:111", "1002": "RxNorm:222", "D01": "SNOMED:333"})
 
 
 @pytest.fixture
-def sample_manifest() -> ProjectionManifest:
+def drug_entity() -> Entity:
+    return Entity(
+        name="Drug",
+        source_table="drugs",
+        id_column="drug_id",
+        ontology_mapping="RxNorm",
+        properties=[
+            PropertyMapping(source="name", target="label"),
+            PropertyMapping(source="type", target="category"),
+        ],
+    )
+
+
+@pytest.fixture
+def drug_only_manifest(drug_entity: Entity) -> ProjectionManifest:
     return ProjectionManifest(
         version="1.0",
         source_connection="mock://db",
-        entities=[
-            Entity(
-                name="Drug",
-                source_table="drugs",
-                id_column="drug_id",
-                ontology_mapping="RxNorm",
-                properties=[
-                    PropertyMapping(source="name", target="label"),
-                    PropertyMapping(source="type", target="category"),
-                ],
+        entities=[drug_entity],
+        relationships=[],
+    )
+
+
+@pytest.fixture
+def sample_manifest(drug_entity: Entity) -> ProjectionManifest:
+    disease_entity = Entity(
+        name="Disease",
+        source_table="diseases",
+        id_column="code",
+        ontology_mapping="SNOMED",
+        properties=[
+            PropertyMapping(source="desc", target="label"),
+        ],
+    )
+    return ProjectionManifest(
+        version="1.0",
+        source_connection="mock://db",
+        entities=[drug_entity, disease_entity],
+        relationships=[
+            Relationship(
+                name="TREATS",
+                source_table="treatments",
+                start_node="Drug",
+                start_key="drug_ref",
+                end_node="Disease",
+                end_key="disease_ref",
             )
         ],
-        relationships=[],
     )
 
 
@@ -120,12 +155,12 @@ def test_ingest_entities_happy_path(
     mock_neo4j_client: MagicMock,
     mock_adapter: MockSourceAdapter,
     mock_resolver: MockOntologyResolver,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     engine = ProjectionEngine(mock_neo4j_client, mock_resolver)
 
-    engine.ingest_entities(sample_manifest, mock_adapter, graph_job, batch_size=10)
+    engine.ingest_entities(drug_only_manifest, mock_adapter, graph_job, batch_size=10)
 
     # Verify status update
     assert graph_job.status == "PROJECTING"
@@ -150,10 +185,96 @@ def test_ingest_entities_happy_path(
     assert data[0]["category"] == "Analgesic"
 
 
+def test_ingest_relationships_happy_path(
+    mock_neo4j_client: MagicMock,
+    mock_adapter: MockSourceAdapter,
+    mock_resolver: MockOntologyResolver,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    engine = ProjectionEngine(mock_neo4j_client, mock_resolver)
+
+    engine.ingest_relationships(sample_manifest, mock_adapter, graph_job, batch_size=10)
+
+    # Verify status
+    assert graph_job.status == "PROJECTING"
+
+    # Verify metrics
+    assert graph_job.metrics["edges_created"] == 2.0
+    assert graph_job.metrics["ontology_misses"] == 0.0
+
+    # Verify Neo4j call
+    mock_neo4j_client.merge_relationships.assert_called_once()
+    kwargs = mock_neo4j_client.merge_relationships.call_args[1]
+
+    assert kwargs["start_label"] == "Drug"
+    assert kwargs["end_label"] == "Disease"
+    assert kwargs["rel_type"] == "TREATS"
+    assert kwargs["start_data_key"] == "drug_ref"
+    assert kwargs["end_data_key"] == "disease_ref"
+
+    data = kwargs["data"]
+    assert len(data) == 2
+
+    # Check ID resolution
+    # 1001 -> RxNorm:111, D01 -> SNOMED:333
+    assert data[0]["drug_ref"] == "RxNorm:111"
+    assert data[0]["disease_ref"] == "SNOMED:333"
+    assert data[0]["evidence"] == "Strong"
+
+
+def test_ingest_relationships_ontology_miss(
+    mock_neo4j_client: MagicMock,
+    mock_adapter: MockSourceAdapter,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    # Empty resolver -> miss
+    resolver = MockOntologyResolver({})
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+
+    engine.ingest_relationships(sample_manifest, mock_adapter, graph_job)
+
+    assert graph_job.metrics["edges_created"] == 2.0
+    # 2 rows * 2 lookups (start/end) = 4 misses
+    assert graph_job.metrics["ontology_misses"] == 4.0
+
+    # Verify fallback
+    kwargs = mock_neo4j_client.merge_relationships.call_args[1]
+    data = kwargs["data"]
+
+    assert data[0]["drug_ref"] == "1001"
+    assert data[0]["disease_ref"] == "D01"
+
+
+def test_ingest_relationships_missing_keys(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    data = {
+        "treatments": [
+            {"drug_ref": "1001", "disease_ref": "D01"},
+            {"evidence": "Bad Row"},  # Missing keys
+            {"drug_ref": None, "disease_ref": "D01"},  # None key
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
+    engine.ingest_relationships(sample_manifest, adapter, graph_job)
+
+    assert graph_job.metrics["edges_created"] == 1.0
+
+    kwargs = mock_neo4j_client.merge_relationships.call_args[1]
+    assert len(kwargs["data"]) == 1
+
+
 def test_ingest_entities_batching(
     mock_neo4j_client: MagicMock,
     mock_resolver: MockOntologyResolver,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     # Generate 25 items
@@ -164,7 +285,7 @@ def test_ingest_entities_batching(
     engine = ProjectionEngine(mock_neo4j_client, mock_resolver)
 
     # Set batch size to 10
-    engine.ingest_entities(sample_manifest, adapter, graph_job, batch_size=10)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job, batch_size=10)
 
     # Should be called 3 times (10, 10, 5)
     assert mock_neo4j_client.merge_nodes.call_count == 3
@@ -174,7 +295,7 @@ def test_ingest_entities_batching(
 def test_ingest_entities_missing_id(
     mock_neo4j_client: MagicMock,
     mock_resolver: MockOntologyResolver,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     data: dict[str, list[dict[str, Any]]] = {
@@ -188,7 +309,7 @@ def test_ingest_entities_missing_id(
     adapter.connect()
 
     engine = ProjectionEngine(mock_neo4j_client, mock_resolver)
-    engine.ingest_entities(sample_manifest, adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job)
 
     # Should only ingest 1
     assert graph_job.metrics["nodes_created"] == 1.0
@@ -199,14 +320,14 @@ def test_ingest_entities_missing_id(
 def test_ingest_entities_ontology_miss(
     mock_neo4j_client: MagicMock,
     mock_adapter: MockSourceAdapter,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     # Empty resolver -> all miss
     resolver = MockOntologyResolver({})
     engine = ProjectionEngine(mock_neo4j_client, resolver)
 
-    engine.ingest_entities(sample_manifest, mock_adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, mock_adapter, graph_job)
 
     assert graph_job.metrics["nodes_created"] == 2.0
     assert graph_job.metrics["ontology_misses"] == 2.0
@@ -220,21 +341,23 @@ def test_ingest_entities_ontology_miss(
 def test_ingest_entities_empty_table(
     mock_neo4j_client: MagicMock,
     mock_adapter: MockSourceAdapter,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     # Point manifest to empty table
-    sample_manifest.entities[0].source_table = "empty_table"
+    drug_only_manifest.entities[0].source_table = "empty_table"
 
     engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
-    engine.ingest_entities(sample_manifest, mock_adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, mock_adapter, graph_job)
 
     mock_neo4j_client.merge_nodes.assert_not_called()
     assert graph_job.metrics["nodes_created"] == 0.0
 
 
 def test_ingest_entities_exception_handling(
-    mock_neo4j_client: MagicMock, sample_manifest: ProjectionManifest, graph_job: GraphJob
+    mock_neo4j_client: MagicMock,
+    drug_only_manifest: ProjectionManifest,
+    graph_job: GraphJob,
 ) -> None:
     # Adapter raises error
     adapter = MagicMock(spec=SourceAdapter)
@@ -243,18 +366,18 @@ def test_ingest_entities_exception_handling(
     engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
 
     with pytest.raises(Exception, match="DB Error"):
-        engine.ingest_entities(sample_manifest, adapter, graph_job)
+        engine.ingest_entities(drug_only_manifest, adapter, graph_job)
 
 
 def test_ingest_entities_property_mapping(
     mock_neo4j_client: MagicMock,
     mock_adapter: MockSourceAdapter,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     # Test that only mapped properties are included
     engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
-    engine.ingest_entities(sample_manifest, mock_adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, mock_adapter, graph_job)
 
     args, _ = mock_neo4j_client.merge_nodes.call_args
     item = args[1][0]
@@ -272,7 +395,7 @@ def test_ingest_entities_property_mapping(
 
 def test_ingest_entities_many_to_one_resolution(
     mock_neo4j_client: MagicMock,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     """Test merging of multiple source entities into a single resolved graph node."""
@@ -291,7 +414,7 @@ def test_ingest_entities_many_to_one_resolution(
     resolver = MockOntologyResolver({"Tyl": "RxNorm:111", "Para": "RxNorm:111"})
 
     engine = ProjectionEngine(mock_neo4j_client, resolver)
-    engine.ingest_entities(sample_manifest, adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job)
 
     # 1. Verify metrics: 2 source records processed (nodes_created metric tracks rows processed essentially)
     assert graph_job.metrics["nodes_created"] == 2.0
@@ -309,14 +432,10 @@ def test_ingest_entities_many_to_one_resolution(
     assert batch_data[0]["label"] == "Tylenol"
     assert batch_data[1]["label"] == "Paracetamol"
 
-    # In a real Neo4j UNWIND batch, the second one will overwrite the first's properties
-    # if they are processed in order. This confirms the logic prepares the data correctly
-    # for that behavior.
-
 
 def test_ingest_entities_duplicate_updates(
     mock_neo4j_client: MagicMock,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     """Test duplicate rows for same ID in the stream."""
@@ -333,7 +452,7 @@ def test_ingest_entities_duplicate_updates(
     resolver = MockOntologyResolver({})
 
     engine = ProjectionEngine(mock_neo4j_client, resolver)
-    engine.ingest_entities(sample_manifest, adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job)
 
     args, _ = mock_neo4j_client.merge_nodes.call_args
     batch_data = args[1]
@@ -348,7 +467,7 @@ def test_ingest_entities_duplicate_updates(
 
 def test_ingest_entities_null_properties(
     mock_neo4j_client: MagicMock,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     """Test handling of None/Null values in properties."""
@@ -361,20 +480,19 @@ def test_ingest_entities_null_properties(
     adapter.connect()
 
     engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
-    engine.ingest_entities(sample_manifest, adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job)
 
     args, _ = mock_neo4j_client.merge_nodes.call_args
     batch_data = args[1]
 
     # Verify None is propagated to the dictionary
-    # Neo4j client/driver handles None by removing the property or setting to NULL
     assert batch_data[0]["category"] is None
     assert batch_data[0]["label"] == "Valid"
 
 
 def test_ingest_entities_special_characters(
     mock_neo4j_client: MagicMock,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     """Test strings with special characters."""
@@ -388,7 +506,7 @@ def test_ingest_entities_special_characters(
     adapter.connect()
 
     engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
-    engine.ingest_entities(sample_manifest, adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job)
 
     args, _ = mock_neo4j_client.merge_nodes.call_args
     batch_data = args[1]
@@ -398,12 +516,10 @@ def test_ingest_entities_special_characters(
 
 def test_ingest_entities_list_properties(
     mock_neo4j_client: MagicMock,
-    sample_manifest: ProjectionManifest,
+    drug_only_manifest: ProjectionManifest,
     graph_job: GraphJob,
 ) -> None:
     """Test properties that are lists (e.g., tags)."""
-    # Note: PropertyMapping assumes simple source->target string.
-    # But if source value is a list, it should pass through.
     data: dict[str, list[dict[str, Any]]] = {
         "drugs": [
             {"drug_id": "1", "name": ["Alias1", "Alias2"], "type": "Test"},
@@ -413,7 +529,7 @@ def test_ingest_entities_list_properties(
     adapter.connect()
 
     engine = ProjectionEngine(mock_neo4j_client, MockOntologyResolver())
-    engine.ingest_entities(sample_manifest, adapter, graph_job)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job)
 
     args, _ = mock_neo4j_client.merge_nodes.call_args
     batch_data = args[1]
