@@ -12,7 +12,7 @@ from typing import Any
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
-from coreason_graph_nexus.models import GraphJob, ProjectionManifest
+from coreason_graph_nexus.models import GraphJob, ProjectionManifest, Relationship
 from coreason_graph_nexus.utils.logger import logger
 
 
@@ -75,7 +75,7 @@ class ProjectionEngine:
                 for row in row_iterator:
                     # 1. Extract ID
                     source_id = row.get(entity.id_column)
-                    if not source_id:
+                    if source_id is None or source_id == "":
                         logger.warning(f"Skipping row with missing ID in {entity.source_table}")
                         continue
 
@@ -91,7 +91,7 @@ class ProjectionEngine:
                     final_id = resolved_id if resolved_id else term_to_resolve
 
                     if not resolved_id:
-                        job.metrics["ontology_misses"] = float(job.metrics["ontology_misses"]) + 1.0
+                        job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
                     else:
                         # PRD mentions "ontology_cache_hits" but model has "ontology_misses"
                         # We track misses as per model.
@@ -113,13 +113,13 @@ class ProjectionEngine:
                     # Flush batch
                     if len(batch_data) >= batch_size:
                         self._flush_nodes(entity.name, batch_data, batch_size)
-                        job.metrics["nodes_created"] = float(job.metrics["nodes_created"]) + len(batch_data)
+                        job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch_data)
                         batch_data = []
 
                 # Flush remaining
                 if batch_data:
                     self._flush_nodes(entity.name, batch_data, batch_size)
-                    job.metrics["nodes_created"] = float(job.metrics["nodes_created"]) + len(batch_data)
+                    job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch_data)
 
             except Exception as e:
                 logger.error(f"Failed to ingest entity {entity.name}: {e}")
@@ -127,9 +127,102 @@ class ProjectionEngine:
                 # PRD doesn't specify failure mode. We raise to be safe.
                 raise
 
-        logger.info(f"Entity ingestion complete. Nodes created: {job.metrics['nodes_created']}")
+        logger.info(f"Entity ingestion complete. Nodes created: {job.metrics.get('nodes_created', 0)}")
+
+    def ingest_relationships(
+        self,
+        manifest: ProjectionManifest,
+        adapter: SourceAdapter,
+        job: GraphJob,
+        batch_size: int = 10000,
+    ) -> None:
+        """
+        Ingests all relationships defined in the manifest.
+
+        Args:
+            manifest: The projection configuration.
+            adapter: The source data adapter.
+            job: The job tracking object (metrics are updated in-place).
+            batch_size: Number of records per transaction.
+        """
+        logger.info(f"Starting relationship ingestion for Job {job.id}")
+        # Relationship ingestion is part of projecting
+        if job.status != "PROJECTING":
+            job.status = "PROJECTING"
+
+        for rel in manifest.relationships:
+            logger.info(f"Processing Relationship: {rel.name} ({rel.start_node} -> {rel.end_node})")
+
+            batch_data: list[dict[str, Any]] = []
+
+            try:
+                row_iterator = adapter.read_table(rel.source_table)
+
+                for row in row_iterator:
+                    # 1. Extract Keys
+                    source_start = row.get(rel.start_key)
+                    source_end = row.get(rel.end_key)
+
+                    if source_start is None or source_start == "" or source_end is None or source_end == "":
+                        logger.warning(f"Skipping row with missing keys in {rel.source_table}")
+                        continue
+
+                    # 2. Resolve Start Node
+                    start_term = str(source_start)
+                    resolved_start = self.resolver.resolve(start_term)
+                    if not resolved_start:
+                        job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
+                        final_start = start_term
+                    else:
+                        final_start = resolved_start
+
+                    # 3. Resolve End Node
+                    end_term = str(source_end)
+                    resolved_end = self.resolver.resolve(end_term)
+                    if not resolved_end:
+                        job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
+                        final_end = end_term
+                    else:
+                        final_end = resolved_end
+
+                    # 4. Prepare Relationship Properties
+                    rel_props = row.copy()
+
+                    # Update the values at the keys specified by start_key/end_key
+                    # so merge_relationships uses the resolved IDs.
+                    rel_props[rel.start_key] = final_start
+                    rel_props[rel.end_key] = final_end
+
+                    batch_data.append(rel_props)
+
+                    if len(batch_data) >= batch_size:
+                        self._flush_relationships(rel, batch_data, batch_size)
+                        job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch_data)
+                        batch_data = []
+
+                if batch_data:
+                    self._flush_relationships(rel, batch_data, batch_size)
+                    job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch_data)
+
+            except Exception as e:
+                logger.error(f"Failed to ingest relationship {rel.name}: {e}")
+                raise
+
+        logger.info(f"Relationship ingestion complete. Edges created: {job.metrics.get('edges_created', 0)}")
 
     def _flush_nodes(self, label: str, data: list[dict[str, Any]], batch_size: int) -> None:
         """Helper to write a batch of nodes."""
         # We use merge_nodes with "id" as the merge key
         self.client.merge_nodes(label, data, merge_keys=["id"], batch_size=batch_size)
+
+    def _flush_relationships(self, rel: Relationship, data: list[dict[str, Any]], batch_size: int) -> None:
+        """Helper to write a batch of relationships."""
+        self.client.merge_relationships(
+            start_label=rel.start_node,
+            start_data_key=rel.start_key,
+            end_label=rel.end_node,
+            end_data_key=rel.end_key,
+            rel_type=rel.name,
+            data=data,
+            batch_size=batch_size,
+        )
