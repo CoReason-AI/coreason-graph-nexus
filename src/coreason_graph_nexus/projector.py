@@ -8,13 +8,13 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from itertools import batched
 from typing import Any
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 from coreason_graph_nexus.config import settings
 from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
 from coreason_graph_nexus.models import Entity, GraphJob, ProjectionManifest, Relationship
+from coreason_graph_nexus.utils.batching import process_and_batch
 from coreason_graph_nexus.utils.logger import logger
 
 
@@ -68,20 +68,16 @@ class ProjectionEngine:
             try:
                 row_iterator = adapter.read_table(entity.source_table)
 
-                # Generator that processes rows one by one
-                processed_rows = (self._process_entity_row(row, entity, job) for row in row_iterator)
+                # Processor Closure
+                def processor(row: dict[str, Any]) -> dict[str, Any] | None:
+                    return self._process_entity_row(row, entity, job)
 
-                # Filter out None values (skipped rows)
-                valid_rows = (row for row in processed_rows if row is not None)
+                # Consumer Closure
+                def consumer(batch: list[dict[str, Any]]) -> None:
+                    self._flush_nodes(entity.name, batch, batch_size)
+                    job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch)
 
-                # Batch the valid rows and write
-                for batch in batched(valid_rows, batch_size):
-                    # batched returns a tuple, convert to list for safety if needed,
-                    # but our Neo4jClient accepts Iterable now.
-                    # However, we need len(batch) for metrics.
-                    batch_list = list(batch)
-                    self._flush_nodes(entity.name, batch_list, batch_size)
-                    job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch_list)
+                process_and_batch(row_iterator, processor, consumer, batch_size)
 
             except Exception as e:
                 logger.error(f"Failed to ingest entity {entity.name}: {e}")
@@ -115,14 +111,16 @@ class ProjectionEngine:
             try:
                 row_iterator = adapter.read_table(rel.source_table)
 
-                processed_rows = (self._process_relationship_row(row, rel, job) for row in row_iterator)
+                # Processor Closure
+                def processor(row: dict[str, Any]) -> dict[str, Any] | None:
+                    return self._process_relationship_row(row, rel, job)
 
-                valid_rows = (row for row in processed_rows if row is not None)
+                # Consumer Closure
+                def consumer(batch: list[dict[str, Any]]) -> None:
+                    self._flush_relationships(rel, batch, batch_size)
+                    job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch)
 
-                for batch in batched(valid_rows, batch_size):
-                    batch_list = list(batch)
-                    self._flush_relationships(rel, batch_list, batch_size)
-                    job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch_list)
+                process_and_batch(row_iterator, processor, consumer, batch_size)
 
             except Exception as e:
                 logger.error(f"Failed to ingest relationship {rel.name}: {e}")
