@@ -52,9 +52,14 @@ class MockOntologyResolver(OntologyResolver):
 
     def __init__(self, mappings: dict[str, str] | None = None):
         self.mappings = mappings or {}
+        self.cache_hits: set[str] = set()
 
-    def resolve(self, term: str) -> str | None:
-        return self.mappings.get(term)
+    def set_cache_hit(self, term: str) -> None:
+        self.cache_hits.add(term)
+
+    def resolve(self, term: str) -> tuple[str | None, bool]:
+        is_hit = term in self.cache_hits
+        return self.mappings.get(term), is_hit
 
 
 # --- Fixtures ---
