@@ -69,10 +69,7 @@ class ProjectionEngine:
                 row_iterator = adapter.read_table(entity.source_table)
 
                 # Generator that processes rows one by one
-                processed_rows = (
-                    self._process_entity_row(row, entity, job)
-                    for row in row_iterator
-                )
+                processed_rows = (self._process_entity_row(row, entity, job) for row in row_iterator)
 
                 # Filter out None values (skipped rows)
                 valid_rows = (row for row in processed_rows if row is not None)
@@ -118,10 +115,7 @@ class ProjectionEngine:
             try:
                 row_iterator = adapter.read_table(rel.source_table)
 
-                processed_rows = (
-                    self._process_relationship_row(row, rel, job)
-                    for row in row_iterator
-                )
+                processed_rows = (self._process_relationship_row(row, rel, job) for row in row_iterator)
 
                 valid_rows = (row for row in processed_rows if row is not None)
 
@@ -136,9 +130,7 @@ class ProjectionEngine:
 
         logger.info(f"Relationship ingestion complete. Edges created: {job.metrics.get('edges_created', 0)}")
 
-    def _process_entity_row(
-        self, row: dict[str, Any], entity: Entity, job: GraphJob
-    ) -> dict[str, Any] | None:
+    def _process_entity_row(self, row: dict[str, Any], entity: Entity, job: GraphJob) -> dict[str, Any] | None:
         """
         Processes a single row for entity ingestion.
         Returns the processed dict or None if row should be skipped.
@@ -168,9 +160,7 @@ class ProjectionEngine:
 
         return node_props
 
-    def _process_relationship_row(
-        self, row: dict[str, Any], rel: Relationship, job: GraphJob
-    ) -> dict[str, Any] | None:
+    def _process_relationship_row(self, row: dict[str, Any], rel: Relationship, job: GraphJob) -> dict[str, Any] | None:
         """
         Processes a single row for relationship ingestion.
         Returns the processed dict or None if row should be skipped.

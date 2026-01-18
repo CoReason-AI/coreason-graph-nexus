@@ -8,7 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from coreason_graph_nexus.utils.logger import logger, configure_logging
+from coreason_graph_nexus.utils.logger import configure_logging, logger
 
 
 def hello_world() -> str:

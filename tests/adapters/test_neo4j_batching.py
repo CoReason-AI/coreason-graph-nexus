@@ -8,6 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from collections.abc import Generator
 from unittest.mock import MagicMock
 
 import pytest
@@ -90,9 +91,7 @@ def test_merge_relationships(mock_driver: MagicMock) -> None:
     client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
 
     data = [{"start": 1, "end": 2, "prop": "val"}]
-    client.merge_relationships(
-        "A", "start", "B", "end", "REL", data, start_node_prop="sid", end_node_prop="eid"
-    )
+    client.merge_relationships("A", "start", "B", "end", "REL", data, start_node_prop="sid", end_node_prop="eid")
 
     driver_instance.execute_query.assert_called_once()
     args, kwargs = driver_instance.execute_query.call_args
@@ -145,7 +144,7 @@ def test_batch_write_generator_exception(mock_driver: MagicMock) -> None:
 
     client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
 
-    def fail_gen():
+    def fail_gen() -> Generator[dict[str, int], None, None]:
         yield {"id": 1}
         raise ValueError("Generator Failed")
 

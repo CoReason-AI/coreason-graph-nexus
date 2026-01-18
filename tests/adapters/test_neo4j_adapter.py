@@ -8,7 +8,6 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
