@@ -263,6 +263,17 @@ class LinkPredictionRequest(BaseModel):
         default=None,
         description="The Cypher query to execute for rule-based prediction. Required if method is HEURISTIC.",
     )
+    threshold: float = Field(
+        default=0.75, ge=0.0, le=1.0, description="Minimum cosine similarity threshold (for SEMANTIC)."
+    )
+    embedding_property: str = Field(
+        default="embedding", description="Property key for vector embedding (for SEMANTIC)."
+    )
+    relationship_type: str = Field(
+        default="SEMANTIC_LINK", description="Type of relationship to create (for SEMANTIC)."
+    )
+    source_label: str | None = Field(default=None, description="Label for source nodes (Required for SEMANTIC).")
+    target_label: str | None = Field(default=None, description="Label for target nodes (Required for SEMANTIC).")
 
     @model_validator(mode="after")
     def validate_heuristic_query(self) -> "LinkPredictionRequest":
@@ -274,4 +285,14 @@ class LinkPredictionRequest(BaseModel):
                 raise ValueError(
                     "heuristic_query is required and cannot be empty/whitespace for HEURISTIC prediction method."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_semantic_params(self) -> "LinkPredictionRequest":
+        """
+        Validates that source_label and target_label are present if method is SEMANTIC.
+        """
+        if self.method == LinkPredictionMethod.SEMANTIC:
+            if not self.source_label or not self.target_label:
+                raise ValueError("source_label and target_label are required for SEMANTIC prediction.")
         return self
