@@ -11,7 +11,7 @@
 from collections.abc import Iterable
 from itertools import batched
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import networkx as nx
 from neo4j import GraphDatabase
@@ -269,64 +269,7 @@ class Neo4jClient:
 
             for record in records:
                 for item in record.values():
-                    if isinstance(item, Node):
-                        # Use element_id (Neo4j 5.x) or id (Neo4j 4.x/compat)
-                        # element_id is preferred for 5.x
-                        node_id = item.element_id if hasattr(item, "element_id") else item.id
-                        # Merge labels and properties
-                        attrs = dict(item.items())
-                        attrs["labels"] = list(item.labels)
-                        graph.add_node(node_id, **attrs)
-
-                    elif isinstance(item, Relationship):
-                        start_id = (
-                            item.start_node.element_id if hasattr(item.start_node, "element_id") else item.start_node.id
-                        )
-                        end_id = item.end_node.element_id if hasattr(item.end_node, "element_id") else item.end_node.id
-                        attrs = dict(item.items())
-                        attrs["type"] = item.type
-                        graph.add_edge(start_id, end_id, **attrs)
-
-                    elif isinstance(item, Path):
-                        # Iterate over nodes and relationships in the path
-                        for node in item.nodes:
-                            node_id = node.element_id if hasattr(node, "element_id") else node.id
-                            attrs = dict(node.items())
-                            attrs["labels"] = list(node.labels)
-                            graph.add_node(node_id, **attrs)
-
-                        for rel in item.relationships:
-                            start_id = (
-                                rel.start_node.element_id
-                                if hasattr(rel.start_node, "element_id")
-                                else rel.start_node.id
-                            )
-                            end_id = rel.end_node.element_id if hasattr(rel.end_node, "element_id") else rel.end_node.id
-                            attrs = dict(rel.items())
-                            attrs["type"] = rel.type
-                            graph.add_edge(start_id, end_id, **attrs)
-                    elif isinstance(item, list):
-                        # Handle list of things (e.g. collected nodes)
-                        for subitem in item:
-                            if isinstance(subitem, Node):
-                                node_id = subitem.element_id if hasattr(subitem, "element_id") else subitem.id
-                                attrs = dict(subitem.items())
-                                attrs["labels"] = list(subitem.labels)
-                                graph.add_node(node_id, **attrs)
-                            elif isinstance(subitem, Relationship):
-                                start_id = (
-                                    subitem.start_node.element_id
-                                    if hasattr(subitem.start_node, "element_id")
-                                    else subitem.start_node.id
-                                )
-                                end_id = (
-                                    subitem.end_node.element_id
-                                    if hasattr(subitem.end_node, "element_id")
-                                    else subitem.end_node.id
-                                )
-                                attrs = dict(subitem.items())
-                                attrs["type"] = subitem.type
-                                graph.add_edge(start_id, end_id, **attrs)
+                    self._process_graph_item(graph, item)
 
             logger.info(
                 f"Converted Cypher result to NetworkX graph: "
@@ -337,3 +280,45 @@ class Neo4jClient:
         except Exception as e:
             logger.error(f"Failed to convert Cypher to NetworkX: {e}")
             raise
+
+    def _process_graph_item(self, graph: nx.DiGraph, item: Any) -> None:
+        """Helper to process a single item from a Neo4j record (Node, Relationship, Path, or list)."""
+        if isinstance(item, Node):
+            self._add_node_to_graph(graph, item)
+
+        elif isinstance(item, Relationship):
+            self._add_relationship_to_graph(graph, item)
+
+        elif isinstance(item, Path):
+            for node in item.nodes:
+                self._add_node_to_graph(graph, node)
+            for rel in item.relationships:
+                self._add_relationship_to_graph(graph, rel)
+
+        elif isinstance(item, list):
+            for subitem in item:
+                self._process_graph_item(graph, subitem)
+
+    def _add_node_to_graph(self, graph: nx.DiGraph, node: Node) -> None:
+        """Adds a Neo4j Node to the NetworkX graph."""
+        node_id = self._get_node_id(node)
+        attrs = dict(node.items())
+        attrs["labels"] = list(node.labels)
+        graph.add_node(node_id, **attrs)
+
+    def _add_relationship_to_graph(self, graph: nx.DiGraph, rel: Relationship) -> None:
+        """Adds a Neo4j Relationship to the NetworkX graph."""
+        start_id = self._get_node_id(rel.start_node)
+        end_id = self._get_node_id(rel.end_node)
+        attrs = dict(rel.items())
+        attrs["type"] = rel.type
+        graph.add_edge(start_id, end_id, **attrs)
+
+    def _get_node_id(self, node: Node) -> str | int:
+        """Gets the canonical ID for a node (element_id for Neo4j 5+ or legacy id)."""
+        # Prefer element_id (Neo4j 5.x+)
+        if hasattr(node, "element_id"):
+            return str(node.element_id)
+        # Fallback for Neo4j 4.x
+        # Explicitly cast to avoid mypy complaining about returning Any
+        return cast(str | int, node.id)
