@@ -8,7 +8,6 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,13 +16,6 @@ import pytest
 from neo4j.exceptions import ServiceUnavailable
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
-
-
-@pytest.fixture
-def mock_driver() -> Generator[MagicMock, None, None]:
-    """Mock the neo4j.GraphDatabase.driver."""
-    with patch("coreason_graph_nexus.adapters.neo4j_adapter.GraphDatabase.driver") as mock:
-        yield mock
 
 
 def test_initialization(mock_driver: MagicMock) -> None:
