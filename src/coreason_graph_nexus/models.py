@@ -267,8 +267,9 @@ class LinkPredictionRequest(BaseModel):
     @model_validator(mode="after")
     def validate_heuristic_query(self) -> "LinkPredictionRequest":
         """
-        Validates that heuristic_query is present if method is HEURISTIC.
+        Validates that heuristic_query is present and non-empty if method is HEURISTIC.
         """
-        if self.method == LinkPredictionMethod.HEURISTIC and not self.heuristic_query:
-            raise ValueError("heuristic_query is required for HEURISTIC prediction method.")
+        if self.method == LinkPredictionMethod.HEURISTIC:
+            if not self.heuristic_query or not self.heuristic_query.strip():
+                raise ValueError("heuristic_query is required and cannot be empty/whitespace for HEURISTIC prediction method.")
         return self

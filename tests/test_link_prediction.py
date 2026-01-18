@@ -36,6 +36,18 @@ def test_link_prediction_request_validation() -> None:
     assert request_sem.method == LinkPredictionMethod.SEMANTIC
 
 
+def test_link_prediction_request_whitespace_validation() -> None:
+    """Test that LinkPredictionRequest fails on whitespace-only heuristic query."""
+
+    # Invalid Request: Whitespace query
+    with pytest.raises(ValidationError) as exc:
+        LinkPredictionRequest(
+            method=LinkPredictionMethod.HEURISTIC,
+            heuristic_query="   "
+        )
+    assert "cannot be empty/whitespace" in str(exc.value)
+
+
 def test_heuristic_prediction_execution(mocker) -> None:
     """Test that heuristic prediction executes the cypher query."""
     mock_client = mocker.Mock()
@@ -51,6 +63,45 @@ def test_heuristic_prediction_execution(mocker) -> None:
 
     # Verify execute_query was called with the query
     mock_client.execute_query.assert_called_once_with(query)
+
+
+def test_complex_heuristic_query_execution(mocker) -> None:
+    """Test execution of a complex, multi-line Cypher query."""
+    mock_client = mocker.Mock()
+    predictor = LinkPredictor(client=mock_client)
+
+    query = """
+    MATCH (u:User)-[:POSTED]->(p:Post)
+    WITH u, count(p) as post_count
+    WHERE post_count > 100
+    MERGE (u)-[:POWER_USER]->(u)
+    """
+    request = LinkPredictionRequest(
+        method=LinkPredictionMethod.HEURISTIC,
+        heuristic_query=query
+    )
+
+    predictor.predict_links(request)
+
+    # Verify execute_query was called with the exact complex query
+    mock_client.execute_query.assert_called_once_with(query)
+
+
+def test_semantic_prediction_with_unused_query(mocker) -> None:
+    """Test semantic prediction request with a heuristic query provided (should be ignored by logic but valid model)."""
+    mock_client = mocker.Mock()
+    predictor = LinkPredictor(client=mock_client)
+
+    # It is valid to provide heuristic_query even if method is SEMANTIC (Pydantic doesn't forbid it)
+    # But the predictor should still attempt SEMANTIC logic and raise NotImplementedError
+    request = LinkPredictionRequest(
+        method=LinkPredictionMethod.SEMANTIC,
+        heuristic_query="MATCH (n) RETURN n"
+    )
+
+    with pytest.raises(NotImplementedError) as exc:
+        predictor.predict_links(request)
+    assert "Semantic link prediction is not yet implemented" in str(exc.value)
 
 
 def test_semantic_prediction_not_implemented(mocker) -> None:
