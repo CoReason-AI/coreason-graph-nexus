@@ -8,11 +8,13 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from itertools import batched
 from typing import Any
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
+from coreason_graph_nexus.config import settings
 from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
-from coreason_graph_nexus.models import GraphJob, ProjectionManifest, Relationship
+from coreason_graph_nexus.models import Entity, GraphJob, ProjectionManifest, Relationship
 from coreason_graph_nexus.utils.logger import logger
 
 
@@ -44,7 +46,7 @@ class ProjectionEngine:
         manifest: ProjectionManifest,
         adapter: SourceAdapter,
         job: GraphJob,
-        batch_size: int = 10000,
+        batch_size: int = settings.default_batch_size,
     ) -> None:
         """
         Ingests all entities defined in the manifest.
@@ -63,68 +65,26 @@ class ProjectionEngine:
         for entity in manifest.entities:
             logger.info(f"Processing Entity: {entity.name} (Source: {entity.source_table})")
 
-            # Prepare buffers
-            batch_data: list[dict[str, Any]] = []
-
-            # Read from source
             try:
-                # We need to assume the adapter is connected or managed by the caller
-                # But typically the caller manages the context.
                 row_iterator = adapter.read_table(entity.source_table)
 
-                for row in row_iterator:
-                    # 1. Extract ID
-                    source_id = row.get(entity.id_column)
-                    if source_id is None or source_id == "":
-                        logger.warning(f"Skipping row with missing ID in {entity.source_table}")
-                        continue
+                # Generator that processes rows one by one
+                processed_rows = (self._process_entity_row(row, entity, job) for row in row_iterator)
 
-                    # 2. Resolve Ontology (Optional but recommended by PRD)
-                    # The PRD says "Before creation, nodes are resolved against the Master Ontology."
-                    # We use the resolver. If it returns None, we might fallback to source_id
-                    # or skip? For now, let's use resolved ID if available, else source_id.
-                    # Ideally, we store both: `id` (canonical) and `source_id`.
+                # Filter out None values (skipped rows)
+                valid_rows = (row for row in processed_rows if row is not None)
 
-                    term_to_resolve = str(source_id)
-                    resolved_id = self.resolver.resolve(term_to_resolve)
-
-                    final_id = resolved_id if resolved_id else term_to_resolve
-
-                    if not resolved_id:
-                        job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
-                    else:
-                        # PRD mentions "ontology_cache_hits" but model has "ontology_misses"
-                        # We track misses as per model.
-                        pass
-
-                    # 3. Map Properties
-                    node_props = {}
-                    # Always include the primary ID
-                    node_props["id"] = final_id
-                    # Also keep source_id for lineage if needed, but strict mapping:
-                    # node_props["_source_id"] = source_id
-
-                    for prop_map in entity.properties:
-                        if prop_map.source in row:
-                            node_props[prop_map.target] = row[prop_map.source]
-
-                    batch_data.append(node_props)
-
-                    # Flush batch
-                    if len(batch_data) >= batch_size:
-                        self._flush_nodes(entity.name, batch_data, batch_size)
-                        job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch_data)
-                        batch_data = []
-
-                # Flush remaining
-                if batch_data:
-                    self._flush_nodes(entity.name, batch_data, batch_size)
-                    job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch_data)
+                # Batch the valid rows and write
+                for batch in batched(valid_rows, batch_size):
+                    # batched returns a tuple, convert to list for safety if needed,
+                    # but our Neo4jClient accepts Iterable now.
+                    # However, we need len(batch) for metrics.
+                    batch_list = list(batch)
+                    self._flush_nodes(entity.name, batch_list, batch_size)
+                    job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch_list)
 
             except Exception as e:
                 logger.error(f"Failed to ingest entity {entity.name}: {e}")
-                # We do not stop the whole job? Or do we?
-                # PRD doesn't specify failure mode. We raise to be safe.
                 raise
 
         logger.info(f"Entity ingestion complete. Nodes created: {job.metrics.get('nodes_created', 0)}")
@@ -134,7 +94,7 @@ class ProjectionEngine:
         manifest: ProjectionManifest,
         adapter: SourceAdapter,
         job: GraphJob,
-        batch_size: int = 10000,
+        batch_size: int = settings.default_batch_size,
     ) -> None:
         """
         Ingests all relationships defined in the manifest.
@@ -146,63 +106,23 @@ class ProjectionEngine:
             batch_size: Number of records per transaction.
         """
         logger.info(f"Starting relationship ingestion for Job {job.id}")
-        # Relationship ingestion is part of projecting
         if job.status != "PROJECTING":
             job.status = "PROJECTING"
 
         for rel in manifest.relationships:
             logger.info(f"Processing Relationship: {rel.name} ({rel.start_node} -> {rel.end_node})")
 
-            batch_data: list[dict[str, Any]] = []
-
             try:
                 row_iterator = adapter.read_table(rel.source_table)
 
-                for row in row_iterator:
-                    # 1. Extract Keys
-                    source_start = row.get(rel.start_key)
-                    source_end = row.get(rel.end_key)
+                processed_rows = (self._process_relationship_row(row, rel, job) for row in row_iterator)
 
-                    if source_start is None or source_start == "" or source_end is None or source_end == "":
-                        logger.warning(f"Skipping row with missing keys in {rel.source_table}")
-                        continue
+                valid_rows = (row for row in processed_rows if row is not None)
 
-                    # 2. Resolve Start Node
-                    start_term = str(source_start)
-                    resolved_start = self.resolver.resolve(start_term)
-                    if not resolved_start:
-                        job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
-                        final_start = start_term
-                    else:
-                        final_start = resolved_start
-
-                    # 3. Resolve End Node
-                    end_term = str(source_end)
-                    resolved_end = self.resolver.resolve(end_term)
-                    if not resolved_end:
-                        job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
-                        final_end = end_term
-                    else:
-                        final_end = resolved_end
-
-                    # 4. Prepare Relationship Properties
-                    rel_props = row.copy()
-
-                    # Update the values at the keys specified by start_key/end_key
-                    # so merge_relationships uses the resolved IDs.
-                    rel_props[rel.start_key] = final_start
-                    rel_props[rel.end_key] = final_end
-
-                    batch_data.append(rel_props)
-
-                    if len(batch_data) >= batch_size:
-                        self._flush_relationships(rel, batch_data, batch_size)
-                        job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch_data)
-                        batch_data = []
-
-                if batch_data:
-                    self._flush_relationships(rel, batch_data, batch_size)
-                    job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch_data)
+                for batch in batched(valid_rows, batch_size):
+                    batch_list = list(batch)
+                    self._flush_relationships(rel, batch_list, batch_size)
+                    job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch_list)
 
             except Exception as e:
                 logger.error(f"Failed to ingest relationship {rel.name}: {e}")
@@ -210,9 +130,76 @@ class ProjectionEngine:
 
         logger.info(f"Relationship ingestion complete. Edges created: {job.metrics.get('edges_created', 0)}")
 
+    def _process_entity_row(self, row: dict[str, Any], entity: Entity, job: GraphJob) -> dict[str, Any] | None:
+        """
+        Processes a single row for entity ingestion.
+        Returns the processed dict or None if row should be skipped.
+        Updates job metrics (side-effect) for ontology misses.
+        """
+        source_id = row.get(entity.id_column)
+        if source_id is None or source_id == "":
+            logger.warning(f"Skipping row with missing ID in {entity.source_table}")
+            return None
+
+        # Resolve Ontology
+        term_to_resolve = str(source_id)
+        resolved_id = self.resolver.resolve(term_to_resolve)
+
+        final_id = resolved_id if resolved_id else term_to_resolve
+
+        if not resolved_id:
+            job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
+
+        # Map Properties
+        node_props = {}
+        node_props["id"] = final_id
+
+        for prop_map in entity.properties:
+            if prop_map.source in row:
+                node_props[prop_map.target] = row[prop_map.source]
+
+        return node_props
+
+    def _process_relationship_row(self, row: dict[str, Any], rel: Relationship, job: GraphJob) -> dict[str, Any] | None:
+        """
+        Processes a single row for relationship ingestion.
+        Returns the processed dict or None if row should be skipped.
+        Updates job metrics (side-effect) for ontology misses.
+        """
+        source_start = row.get(rel.start_key)
+        source_end = row.get(rel.end_key)
+
+        if source_start is None or source_start == "" or source_end is None or source_end == "":
+            logger.warning(f"Skipping row with missing keys in {rel.source_table}")
+            return None
+
+        # Resolve Start Node
+        start_term = str(source_start)
+        resolved_start = self.resolver.resolve(start_term)
+        if not resolved_start:
+            job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
+            final_start = start_term
+        else:
+            final_start = resolved_start
+
+        # Resolve End Node
+        end_term = str(source_end)
+        resolved_end = self.resolver.resolve(end_term)
+        if not resolved_end:
+            job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
+            final_end = end_term
+        else:
+            final_end = resolved_end
+
+        # Prepare Relationship Properties
+        rel_props = row.copy()
+        rel_props[rel.start_key] = final_start
+        rel_props[rel.end_key] = final_end
+
+        return rel_props
+
     def _flush_nodes(self, label: str, data: list[dict[str, Any]], batch_size: int) -> None:
         """Helper to write a batch of nodes."""
-        # We use merge_nodes with "id" as the merge key
         self.client.merge_nodes(label, data, merge_keys=["id"], batch_size=batch_size)
 
     def _flush_relationships(self, rel: Relationship, data: list[dict[str, Any]], batch_size: int) -> None:
