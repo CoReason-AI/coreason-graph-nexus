@@ -69,11 +69,11 @@ class ProjectionEngine:
                 row_iterator = adapter.read_table(entity.source_table)
 
                 # Processor Closure
-                def processor(row: dict[str, Any]) -> dict[str, Any] | None:
+                def processor(row: dict[str, Any], entity: Entity = entity) -> dict[str, Any] | None:
                     return self._process_entity_row(row, entity, job)
 
                 # Consumer Closure
-                def consumer(batch: list[dict[str, Any]]) -> None:
+                def consumer(batch: list[dict[str, Any]], entity: Entity = entity) -> None:
                     self._flush_nodes(entity.name, batch, batch_size)
                     job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch)
 
@@ -112,11 +112,11 @@ class ProjectionEngine:
                 row_iterator = adapter.read_table(rel.source_table)
 
                 # Processor Closure
-                def processor(row: dict[str, Any]) -> dict[str, Any] | None:
+                def processor(row: dict[str, Any], rel: Relationship = rel) -> dict[str, Any] | None:
                     return self._process_relationship_row(row, rel, job)
 
                 # Consumer Closure
-                def consumer(batch: list[dict[str, Any]]) -> None:
+                def consumer(batch: list[dict[str, Any]], rel: Relationship = rel) -> None:
                     self._flush_relationships(rel, batch, batch_size)
                     job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch)
 

@@ -11,11 +11,15 @@
 import pytest
 import networkx as nx
 from unittest.mock import MagicMock
+from pytest_mock import MockFixture
+from typing import Any
+
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 from neo4j.graph import Node, Relationship
 
+
 @pytest.fixture
-def mock_driver(mocker):
+def mock_driver(mocker: MockFixture) -> Any:
     driver = mocker.Mock()
     # Mock close method
     driver.close = mocker.Mock()
@@ -31,22 +35,26 @@ def mock_driver(mocker):
 
     return driver
 
+
 @pytest.fixture
-def client(mock_driver):
+def client(mock_driver: Any) -> Neo4jClient:
     return Neo4jClient("bolt://localhost:7687", ("user", "pass"))
 
-def test_initialization(client, mock_driver):
+
+def test_initialization(client: Neo4jClient, mock_driver: Any) -> None:
     assert client._uri == "bolt://localhost:7687"
     assert client._driver == mock_driver
 
-def test_context_manager(client, mock_driver):
+
+def test_context_manager(client: Neo4jClient, mock_driver: Any) -> None:
     with client as c:
         assert c is client
         mock_driver.verify_connectivity.assert_called_once()
 
     mock_driver.close.assert_called_once()
 
-def test_execute_query_success(client, mock_driver):
+
+def test_execute_query_success(client: Neo4jClient, mock_driver: Any) -> None:
     mock_record = MagicMock()
     mock_record.data.return_value = {"key": "value"}
     mock_driver.execute_query.return_value = ([mock_record], None, None)
@@ -56,13 +64,15 @@ def test_execute_query_success(client, mock_driver):
     assert result == [{"key": "value"}]
     mock_driver.execute_query.assert_called_once()
 
-def test_execute_query_failure(client, mock_driver):
+
+def test_execute_query_failure(client: Neo4jClient, mock_driver: Any) -> None:
     mock_driver.execute_query.side_effect = Exception("Query Failed")
 
     with pytest.raises(Exception, match="Query Failed"):
         client.execute_query("BAD QUERY")
 
-def test_batch_write_success(client, mock_driver):
+
+def test_batch_write_success(client: Neo4jClient, mock_driver: Any) -> None:
     data = [{"id": 1}, {"id": 2}, {"id": 3}]
 
     client.batch_write("UNWIND $batch AS row ...", data, batch_size=2)
@@ -70,11 +80,13 @@ def test_batch_write_success(client, mock_driver):
     # Should be called twice (batch of 2, batch of 1)
     assert mock_driver.execute_query.call_count == 2
 
-def test_batch_write_empty(client, mock_driver):
+
+def test_batch_write_empty(client: Neo4jClient, mock_driver: Any) -> None:
     client.batch_write("...", [])
     mock_driver.execute_query.assert_not_called()
 
-def test_merge_nodes(client, mock_driver):
+
+def test_merge_nodes(client: Neo4jClient, mock_driver: Any) -> None:
     data = [{"id": 1, "name": "A"}]
     client.merge_nodes("Person", data, merge_keys=["id"])
 
@@ -83,7 +95,8 @@ def test_merge_nodes(client, mock_driver):
     query = args[0]
     assert "MERGE (n:`Person` { `id`: row.`id` })" in query
 
-def test_merge_relationships(client, mock_driver):
+
+def test_merge_relationships(client: Neo4jClient, mock_driver: Any) -> None:
     data = [{"start": 1, "end": 2}]
     client.merge_relationships("Person", "start", "Person", "end", "KNOWS", data)
 
@@ -94,7 +107,8 @@ def test_merge_relationships(client, mock_driver):
     assert "MATCH (target:`Person`" in query
     assert "MERGE (source)-[r:`KNOWS`]->(target)" in query
 
-def test_to_networkx_basic(client, mock_driver, mocker):
+
+def test_to_networkx_basic(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
     # Setup mock records
     node_mock = mocker.create_autospec(Node, instance=True)
     node_mock.element_id = "n1"
@@ -121,7 +135,8 @@ def test_to_networkx_basic(client, mock_driver, mocker):
     assert ("n1", "n2") in graph.edges
     assert graph.edges["n1", "n2"]["since"] == 2022
 
-def test_to_networkx_legacy_id_fallback(client, mock_driver, mocker):
+
+def test_to_networkx_legacy_id_fallback(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
     """Test fallback to .id when .element_id is missing (Neo4j 4.x compat)."""
     # Patch the Node class in the adapter so `isinstance(x, Node)` passes for our mock
     mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MagicMock)

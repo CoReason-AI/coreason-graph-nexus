@@ -11,7 +11,7 @@
 from collections.abc import Iterable
 from itertools import batched
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import networkx as nx
 from neo4j import GraphDatabase
@@ -318,5 +318,7 @@ class Neo4jClient:
         """Gets the canonical ID for a node (element_id for Neo4j 5+ or legacy id)."""
         # Prefer element_id (Neo4j 5.x+)
         if hasattr(node, "element_id"):
-            return node.element_id
-        return node.id  # type: ignore # Fallback for Neo4j 4.x
+            return str(node.element_id)
+        # Fallback for Neo4j 4.x
+        # Explicitly cast to avoid mypy complaining about returning Any
+        return cast(str | int, node.id)

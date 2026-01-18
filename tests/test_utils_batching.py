@@ -9,17 +9,21 @@
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
 import pytest
+from pytest_mock import MockFixture
+from typing import Any, Iterable
+
 from coreason_graph_nexus.utils.batching import process_and_batch
 
-def test_process_and_batch_basic():
-    """Test basic processing and batching logic."""
-    items = range(10)
-    processed_batches = []
 
-    def processor(x):
+def test_process_and_batch_basic() -> None:
+    """Test basic processing and batching logic."""
+    items: Iterable[int] = range(10)
+    processed_batches: list[list[int]] = []
+
+    def processor(x: int) -> int | None:
         return x * 2
 
-    def consumer(batch):
+    def consumer(batch: list[int]) -> None:
         processed_batches.append(batch)
 
     count = process_and_batch(items, processor, consumer, batch_size=3)
@@ -31,15 +35,16 @@ def test_process_and_batch_basic():
     assert processed_batches[2] == [12, 14, 16]
     assert processed_batches[3] == [18]
 
-def test_process_and_batch_filtering():
-    """Test that None values returned by processor are skipped."""
-    items = range(10)
-    processed_batches = []
 
-    def processor(x):
+def test_process_and_batch_filtering() -> None:
+    """Test that None values returned by processor are skipped."""
+    items: Iterable[int] = range(10)
+    processed_batches: list[list[int]] = []
+
+    def processor(x: int) -> int | None:
         return x if x % 2 == 0 else None  # Keep evens
 
-    def consumer(batch):
+    def consumer(batch: list[int]) -> None:
         processed_batches.append(batch)
 
     count = process_and_batch(items, processor, consumer, batch_size=2)
@@ -51,34 +56,37 @@ def test_process_and_batch_filtering():
     assert processed_batches[1] == [4, 6]
     assert processed_batches[2] == [8]
 
-def test_process_and_batch_exception_propagation():
-    """Test that exceptions in consumer are propagated."""
-    items = [1, 2, 3]
 
-    def processor(x):
+def test_process_and_batch_exception_propagation() -> None:
+    """Test that exceptions in consumer are propagated."""
+    items: list[int] = [1, 2, 3]
+
+    def processor(x: int) -> int:
         return x
 
-    def consumer(batch):
+    def consumer(batch: list[int]) -> None:
         raise ValueError("Consumer failed")
 
     with pytest.raises(ValueError, match="Consumer failed"):
         process_and_batch(items, processor, consumer, batch_size=2)
 
-def test_process_and_batch_empty_input():
+
+def test_process_and_batch_empty_input() -> None:
     """Test behavior with empty input."""
-    items = []
-    processed_batches = []
+    items: list[int] = []
+    processed_batches: list[list[int]] = []
 
     process_and_batch(items, lambda x: x, lambda b: processed_batches.append(b), batch_size=5)
 
     assert len(processed_batches) == 0
 
-def test_process_and_batch_all_filtered():
-    """Test when all items are filtered out."""
-    items = [1, 3, 5]
-    processed_batches = []
 
-    def processor(x):
+def test_process_and_batch_all_filtered() -> None:
+    """Test when all items are filtered out."""
+    items: list[int] = [1, 3, 5]
+    processed_batches: list[list[int]] = []
+
+    def processor(x: int) -> int | None:
         return None
 
     count = process_and_batch(items, processor, lambda b: processed_batches.append(b), batch_size=2)
@@ -86,14 +94,15 @@ def test_process_and_batch_all_filtered():
     assert count == 0
     assert len(processed_batches) == 0
 
-def test_process_and_batch_logging_on_error(mocker):
+
+def test_process_and_batch_logging_on_error(mocker: MockFixture) -> None:
     """Test that logger.error is called when consumer fails."""
     # We mock the logger to verify it is called
     mock_logger = mocker.patch("coreason_graph_nexus.utils.batching.logger")
 
-    items = [1]
+    items: list[int] = [1]
 
-    def consumer(batch):
+    def consumer(batch: list[int]) -> None:
         raise ValueError("Boom")
 
     with pytest.raises(ValueError, match="Boom"):
