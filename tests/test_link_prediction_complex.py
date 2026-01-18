@@ -9,10 +9,12 @@
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
 from typing import Any
+
 import pytest
-import numpy as np
+
 from coreason_graph_nexus.link_prediction import LinkPredictor
 from coreason_graph_nexus.models import LinkPredictionMethod, LinkPredictionRequest
+
 
 def test_semantic_prediction_idempotency(mocker: Any) -> None:
     """
@@ -20,7 +22,8 @@ def test_semantic_prediction_idempotency(mocker: Any) -> None:
     """
     mock_client = mocker.Mock()
     # Setup embeddings
-    embeddings = [{"id": "1", "embedding": [1.0, 0.0]}]
+    # unused `embeddings` variable removed
+
     # We need separate return values for source and target
     # If source and target are the same list of nodes, we have a self-loop (1->1).
     # The code explicitly skips self-loops: `if s_id == t_id: continue`
@@ -33,10 +36,7 @@ def test_semantic_prediction_idempotency(mocker: Any) -> None:
 
     predictor = LinkPredictor(client=mock_client)
     request = LinkPredictionRequest(
-        method=LinkPredictionMethod.SEMANTIC,
-        source_label="S",
-        target_label="T",
-        threshold=0.9
+        method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T", threshold=0.9
     )
 
     predictor.predict_links(request)
@@ -45,7 +45,8 @@ def test_semantic_prediction_idempotency(mocker: Any) -> None:
     assert mock_client.batch_write.called
     query = mock_client.batch_write.call_args[0][0]
     assert "MERGE" in query
-    assert "CREATE" not in query # Should prefer MERGE for idempotency
+    assert "CREATE" not in query  # Should prefer MERGE for idempotency
+
 
 def test_semantic_prediction_disconnected_components(mocker: Any) -> None:
     """
@@ -68,10 +69,7 @@ def test_semantic_prediction_disconnected_components(mocker: Any) -> None:
 
     predictor = LinkPredictor(client=mock_client)
     request = LinkPredictionRequest(
-        method=LinkPredictionMethod.SEMANTIC,
-        source_label="S",
-        target_label="T",
-        threshold=0.9
+        method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T", threshold=0.9
     )
 
     predictor.predict_links(request)
@@ -83,6 +81,7 @@ def test_semantic_prediction_disconnected_components(mocker: Any) -> None:
     assert data[0]["start_id"] == "A"
     assert data[0]["end_id"] == "B"
 
+
 def test_semantic_prediction_mixed_embedding_types(mocker: Any) -> None:
     """
     Test robustness when embeddings might be lists or numpy arrays (if fetch changed).
@@ -90,22 +89,19 @@ def test_semantic_prediction_mixed_embedding_types(mocker: Any) -> None:
     """
     mock_client = mocker.Mock()
 
-    source_emb = [{"id": "A", "embedding": (1.0, 0.0)}] # Tuple instead of list
+    source_emb = [{"id": "A", "embedding": (1.0, 0.0)}]  # Tuple instead of list
     target_emb = [{"id": "B", "embedding": (1.0, 0.0)}]
 
     mock_client.execute_query.side_effect = [source_emb, target_emb]
 
     predictor = LinkPredictor(client=mock_client)
-    request = LinkPredictionRequest(
-        method=LinkPredictionMethod.SEMANTIC,
-        source_label="S",
-        target_label="T"
-    )
+    request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T")
 
     # np.array can handle tuples, so this should pass without error
     predictor.predict_links(request)
 
     mock_client.batch_write.assert_called_once()
+
 
 def test_semantic_prediction_error_handling(mocker: Any) -> None:
     """
@@ -115,11 +111,7 @@ def test_semantic_prediction_error_handling(mocker: Any) -> None:
     mock_client.execute_query.side_effect = Exception("DB Connection Lost")
 
     predictor = LinkPredictor(client=mock_client)
-    request = LinkPredictionRequest(
-        method=LinkPredictionMethod.SEMANTIC,
-        source_label="S",
-        target_label="T"
-    )
+    request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T")
 
     with pytest.raises(Exception) as exc:
         predictor.predict_links(request)

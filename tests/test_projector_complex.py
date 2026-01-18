@@ -8,11 +8,13 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from typing import Any
-import pytest
+from types import TracebackType
+from typing import Any, Iterator, Self
 from uuid import uuid4
+
+from coreason_graph_nexus.models import Entity, GraphJob, ProjectionManifest, Relationship
 from coreason_graph_nexus.projector import ProjectionEngine
-from coreason_graph_nexus.models import GraphJob, ProjectionManifest, Entity, Relationship, PropertyMapping
+
 
 class MockOntologyResolver:
     def __init__(self, mapping: dict[str, str] | None = None):
@@ -21,12 +23,25 @@ class MockOntologyResolver:
     def resolve(self, term: str) -> str | None:
         return self.mapping.get(term)
 
+
 class MockSourceAdapter:
     def __init__(self, data: dict[str, list[dict[str, Any]]]):
         self.data = data
 
-    def read_table(self, table_name: str) -> Any:
+    def read_table(self, table_name: str) -> Iterator[dict[str, Any]]:
         return iter(self.data.get(table_name, []))
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        pass
+
 
 def test_ontology_misses(mocker: Any) -> None:
     """
@@ -39,35 +54,30 @@ def test_ontology_misses(mocker: Any) -> None:
     # Resolver knows "known_term" -> "canonical_id", but doesn't know "unknown_term"
     resolver = MockOntologyResolver(mapping={"known_term": "canonical_id"})
 
-    engine = ProjectionEngine(client=mock_client, resolver=resolver) # type: ignore
+    engine = ProjectionEngine(client=mock_client, resolver=resolver)  # type: ignore
 
     # Define Manifest
     entity = Entity(
         name="TestEntity",
         source_table="source_table",
         id_column="id_col",
-        ontology_mapping="RxNorm", # Added missing field
-        properties=[]
+        ontology_mapping="RxNorm",  # Added missing field
+        properties=[],
     )
     manifest = ProjectionManifest(
-        version="1.0", # Added missing field
-        source_connection="sqlite:///", # Added missing field
+        version="1.0",  # Added missing field
+        source_connection="sqlite:///",  # Added missing field
         entities=[entity],
-        relationships=[]
+        relationships=[],
     )
 
     # Define Data
     # Row 1: Known -> Should use "canonical_id", no miss.
     # Row 2: Unknown -> Should use "unknown_term", +1 miss.
-    data = {
-        "source_table": [
-            {"id_col": "known_term"},
-            {"id_col": "unknown_term"}
-        ]
-    }
+    data = {"source_table": [{"id_col": "known_term"}, {"id_col": "unknown_term"}]}
     adapter = MockSourceAdapter(data)
 
-    job = GraphJob(id=uuid4(), status="PROJECTING", manifest_path="dummy.yaml") # Fixed fields
+    job = GraphJob(id=uuid4(), status="PROJECTING", manifest_path="dummy.yaml")  # Fixed fields
 
     engine.ingest_entities(manifest, adapter, job)
 
@@ -82,12 +92,13 @@ def test_ontology_misses(mocker: Any) -> None:
     assert mock_client.merge_nodes.call_count > 0
     # Inspect the data passed to merge_nodes
     call_args = mock_client.merge_nodes.call_args
-    passed_data = call_args[1]['data'] if 'data' in call_args[1] else call_args[0][1]
+    passed_data = call_args[1]["data"] if "data" in call_args[1] else call_args[0][1]
 
     # Item 1: known_term resolved to canonical_id
-    assert passed_data[0]['id'] == "canonical_id"
+    assert passed_data[0]["id"] == "canonical_id"
     # Item 2: unknown_term fallback
-    assert passed_data[1]['id'] == "unknown_term"
+    assert passed_data[1]["id"] == "unknown_term"
+
 
 def test_relationship_ontology_misses(mocker: Any) -> None:
     """
@@ -95,26 +106,16 @@ def test_relationship_ontology_misses(mocker: Any) -> None:
     """
     mock_client = mocker.Mock()
     resolver = MockOntologyResolver(mapping={"s1": "c1", "t1": "c2"})
-    engine = ProjectionEngine(client=mock_client, resolver=resolver) # type: ignore
+    engine = ProjectionEngine(client=mock_client, resolver=resolver)  # type: ignore
 
     # Entities needed for validation
     eA = Entity(name="A", source_table="t", id_column="i", ontology_mapping="x", properties=[])
     eB = Entity(name="B", source_table="t", id_column="i", ontology_mapping="x", properties=[])
 
     rel = Relationship(
-        name="REL",
-        start_node="A",
-        end_node="B",
-        source_table="rel_table",
-        start_key="start_col",
-        end_key="end_col"
+        name="REL", start_node="A", end_node="B", source_table="rel_table", start_key="start_col", end_key="end_col"
     )
-    manifest = ProjectionManifest(
-        version="1.0",
-        source_connection="s",
-        entities=[eA, eB],
-        relationships=[rel]
-    )
+    manifest = ProjectionManifest(version="1.0", source_connection="s", entities=[eA, eB], relationships=[rel])
 
     # Row 1: s1->t1 (Both resolved) -> c1->c2. Misses: 0
     # Row 2: s1->t_unknown (Target miss) -> c1->t_unknown. Misses: 1
@@ -124,7 +125,7 @@ def test_relationship_ontology_misses(mocker: Any) -> None:
         "rel_table": [
             {"start_col": "s1", "end_col": "t1"},
             {"start_col": "s1", "end_col": "t_unknown"},
-            {"start_col": "s_unknown", "end_col": "t1"}
+            {"start_col": "s_unknown", "end_col": "t1"},
         ]
     }
     adapter = MockSourceAdapter(data)
@@ -137,7 +138,7 @@ def test_relationship_ontology_misses(mocker: Any) -> None:
 
     # Verify data passed to merge_relationships
     call_args = mock_client.merge_relationships.call_args
-    passed_data = call_args[1]['data'] if 'data' in call_args[1] else call_args[0][5] # 6th arg is data
+    passed_data = call_args[1]["data"] if "data" in call_args[1] else call_args[0][5]  # 6th arg is data
 
     # Row 1
     assert passed_data[0]["start_col"] == "c1"
@@ -153,33 +154,15 @@ def test_data_integrity_skipping(mocker: Any) -> None:
     """
     mock_client = mocker.Mock()
     resolver = MockOntologyResolver()
-    engine = ProjectionEngine(client=mock_client, resolver=resolver) # type: ignore
+    engine = ProjectionEngine(client=mock_client, resolver=resolver)  # type: ignore
 
-    entity = Entity(
-        name="E",
-        source_table="table",
-        id_column="id",
-        ontology_mapping="x",
-        properties=[]
-    )
-    manifest = ProjectionManifest(
-        version="1.0",
-        source_connection="s",
-        entities=[entity],
-        relationships=[]
-    )
+    entity = Entity(name="E", source_table="table", id_column="id", ontology_mapping="x", properties=[])
+    manifest = ProjectionManifest(version="1.0", source_connection="s", entities=[entity], relationships=[])
 
     # Row 1: Valid
     # Row 2: Missing ID (None) -> Skip
     # Row 3: Empty ID ("") -> Skip
-    data = {
-        "table": [
-            {"id": "valid"},
-            {"id": None},
-            {"id": ""},
-            {"id": "valid2"}
-        ]
-    }
+    data = {"table": [{"id": "valid"}, {"id": None}, {"id": ""}, {"id": "valid2"}]}
     adapter = MockSourceAdapter(data)
     job = GraphJob(id=uuid4(), status="PROJECTING", manifest_path="d.yaml")
 
@@ -189,10 +172,10 @@ def test_data_integrity_skipping(mocker: Any) -> None:
 
     # Verify only 2 items passed
     call_args = mock_client.merge_nodes.call_args
-    passed_data = call_args[1]['data'] if 'data' in call_args[1] else call_args[0][1]
+    passed_data = call_args[1]["data"] if "data" in call_args[1] else call_args[0][1]
     assert len(passed_data) == 2
-    assert passed_data[0]['id'] == "valid"
-    assert passed_data[1]['id'] == "valid2"
+    assert passed_data[0]["id"] == "valid"
+    assert passed_data[1]["id"] == "valid2"
 
 
 def test_projection_idempotency_verification(mocker: Any) -> None:
@@ -201,15 +184,10 @@ def test_projection_idempotency_verification(mocker: Any) -> None:
     """
     mock_client = mocker.Mock()
     resolver = MockOntologyResolver()
-    engine = ProjectionEngine(client=mock_client, resolver=resolver) # type: ignore
+    engine = ProjectionEngine(client=mock_client, resolver=resolver)  # type: ignore
 
     entity = Entity(name="E", source_table="t", id_column="id", ontology_mapping="x", properties=[])
-    manifest = ProjectionManifest(
-        version="1.0",
-        source_connection="s",
-        entities=[entity],
-        relationships=[]
-    )
+    manifest = ProjectionManifest(version="1.0", source_connection="s", entities=[entity], relationships=[])
     data = {"t": [{"id": "1"}]}
     adapter = MockSourceAdapter(data)
     job = GraphJob(id=uuid4(), status="PROJECTING", manifest_path="d.yaml")

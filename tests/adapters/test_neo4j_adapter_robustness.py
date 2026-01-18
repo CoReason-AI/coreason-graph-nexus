@@ -8,10 +8,14 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from typing import Any
+
 import pytest
+
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 
-def test_batch_write_failure_handling(mocker):
+
+def test_batch_write_failure_handling(mocker: Any) -> None:
     """
     Test that batch_write raises an exception if one chunk fails,
     and logs the failure index.
@@ -24,20 +28,22 @@ def test_batch_write_failure_handling(mocker):
     # Chunk 1: Success
     # Chunk 2: Failure
 
-    def side_effect(query, parameters_, database_):
-        batch = parameters_['batch']
-        if batch[0]['id'] == 3: # The second chunk starts with id 3
+    def side_effect(query: str, parameters_: dict[str, Any], database_: str) -> tuple[list[Any], Any, Any]:
+        batch = parameters_["batch"]
+        if batch[0]["id"] == 3:  # The second chunk starts with id 3
             raise Exception("Chunk Failed")
         return [], None, None
 
     mock_driver.execute_query.side_effect = side_effect
 
     client = Neo4jClient(uri="bolt://localhost:7687", auth=("u", "p"))
-    client._driver = mock_driver # Inject mock driver
+    client._driver = mock_driver  # Inject mock driver
 
     data = [
-        {"id": 1}, {"id": 2}, # Chunk 1
-        {"id": 3}, {"id": 4}  # Chunk 2
+        {"id": 1},
+        {"id": 2},  # Chunk 1
+        {"id": 3},
+        {"id": 4},  # Chunk 2
     ]
 
     with pytest.raises(Exception) as exc:
