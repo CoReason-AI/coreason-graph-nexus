@@ -303,3 +303,103 @@ def test_semantic_prediction_missing_labels_defensive(mocker: Any) -> None:
     with pytest.raises(ValueError) as exc:
         predictor.predict_links(request)
     assert "source_label and target_label are required" in str(exc.value)
+
+
+# Edge Case Tests
+
+
+def test_semantic_prediction_zero_vector(mocker: Any) -> None:
+    """Test behavior when embeddings contain zero vectors."""
+    mock_client = mocker.Mock()
+
+    # Source: 1 zero vector
+    source_embeddings = [{"id": "s1", "embedding": [0.0, 0.0]}]
+    # Target: 1 normal vector
+    target_embeddings = [{"id": "t1", "embedding": [1.0, 0.0]}]
+
+    mock_client.execute_query.side_effect = [source_embeddings, target_embeddings]
+
+    predictor = LinkPredictor(client=mock_client)
+    request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T")
+
+    # Scikit-learn cosine_similarity handles zero vectors (usually returns 0)
+    # Should not raise error
+    predictor.predict_links(request)
+
+    # Check that batch_write was called? Depends on threshold. Default is 0.75.
+    # Sim([0,0], [1,0]) is 0.0. So no write.
+    mock_client.batch_write.assert_not_called()
+
+
+def test_semantic_prediction_dimension_mismatch(mocker: Any) -> None:
+    """Test behavior when embedding dimensions do not match."""
+    mock_client = mocker.Mock()
+
+    # Source: 2D
+    source_embeddings = [{"id": "s1", "embedding": [1.0, 0.0]}]
+    # Target: 3D
+    target_embeddings = [{"id": "t1", "embedding": [1.0, 0.0, 1.0]}]
+
+    mock_client.execute_query.side_effect = [source_embeddings, target_embeddings]
+
+    predictor = LinkPredictor(client=mock_client)
+    request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T")
+
+    # Scikit-learn should raise ValueError for dimension mismatch
+    with pytest.raises(ValueError) as exc:
+        predictor.predict_links(request)
+    assert "Incompatible dimension" in str(exc.value) or "shapes" in str(exc.value)
+
+
+def test_semantic_prediction_threshold_boundary(mocker: Any) -> None:
+    """Test that similarity exactly equal to threshold is included."""
+    mock_client = mocker.Mock()
+
+    # Source and Target identical -> Sim = 1.0
+    # But let's try something less trivial.
+    # [1, 0] vs [0.707, 0.707] -> Sim ~= 0.707
+    source_embeddings = [{"id": "s1", "embedding": [1.0, 0.0]}]
+    target_embeddings = [{"id": "t1", "embedding": [0.5, 0.866]}]  # Sim = 0.5 (approx cos(60))
+
+    mock_client.execute_query.side_effect = [source_embeddings, target_embeddings]
+
+    predictor = LinkPredictor(client=mock_client)
+    # Set threshold exactly to 0.5 (or slightly below to be safe with float math, but let's try exact)
+    # Actually, let's use simple vectors: [1, 0] and [0.5, 0.5] -> dot=0.5, norms=1, 0.707 -> sim=0.707
+    # Let's mock the internal cosine_similarity call?
+    # Or just rely on sklearn.
+    # [1, 0] and [1, 0] is 1.0. Threshold 1.0 should pass.
+    request = LinkPredictionRequest(
+        method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T", threshold=1.0
+    )
+
+    # Override target to be identical
+    target_embeddings = [{"id": "t1", "embedding": [1.0, 0.0]}]
+    mock_client.execute_query.side_effect = [source_embeddings, target_embeddings]
+
+    predictor.predict_links(request)
+
+    # Should be included
+    mock_client.batch_write.assert_called_once()
+    data = mock_client.batch_write.call_args[0][1]
+    assert len(data) == 1
+    assert data[0]["score"] >= 1.0
+
+
+def test_semantic_prediction_invalid_embedding_format(mocker: Any) -> None:
+    """Test handling of invalid embedding data types from Neo4j."""
+    mock_client = mocker.Mock()
+
+    # Source returns string instead of list
+    source_embeddings = [{"id": "s1", "embedding": "invalid-string"}]
+    target_embeddings = [{"id": "t1", "embedding": [1.0, 0.0]}]
+
+    mock_client.execute_query.side_effect = [source_embeddings, target_embeddings]
+
+    predictor = LinkPredictor(client=mock_client)
+    request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T")
+
+    # This will likely fail during np.array creation or sklearn
+    # Expecting some kind of error
+    with pytest.raises((ValueError, TypeError)):
+        predictor.predict_links(request)
