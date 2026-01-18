@@ -13,7 +13,8 @@ from unittest.mock import MagicMock
 
 import networkx as nx
 import pytest
-from neo4j.graph import Node, Relationship
+from neo4j.exceptions import ServiceUnavailable
+from neo4j.graph import Node, Path, Relationship
 from pytest_mock import MockFixture
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
@@ -53,6 +54,18 @@ def test_context_manager(client: Neo4jClient, mock_driver: Any) -> None:
         mock_driver.verify_connectivity.assert_called_once()
 
     mock_driver.close.assert_called_once()
+
+
+def test_verify_connectivity_failure(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    """Test handling of ServiceUnavailable in verify_connectivity."""
+    mock_driver.verify_connectivity.side_effect = ServiceUnavailable("Cannot connect")
+    mock_logger = mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.logger")
+
+    with pytest.raises(ServiceUnavailable):
+        client.verify_connectivity()
+
+    mock_logger.error.assert_called_once()
+    assert "Failed to connect to Neo4j" in mock_logger.error.call_args[0][0]
 
 
 def test_execute_query_success(client: Neo4jClient, mock_driver: Any) -> None:
@@ -135,6 +148,59 @@ def test_to_networkx_basic(client: Neo4jClient, mock_driver: Any, mocker: MockFi
     assert graph.nodes["n1"]["name"] == "Alice"
     assert ("n1", "n2") in graph.edges
     assert graph.edges["n1", "n2"]["since"] == 2022
+
+
+def test_to_networkx_failure(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    """Test handling of exceptions in to_networkx."""
+    mock_driver.execute_query.side_effect = Exception("Conversion Failed")
+    mock_logger = mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.logger")
+
+    with pytest.raises(Exception, match="Conversion Failed"):
+        client.to_networkx("MATCH ...")
+
+    mock_logger.error.assert_called_once()
+    assert "Failed to convert Cypher to NetworkX" in mock_logger.error.call_args[0][0]
+
+
+def test_to_networkx_complex_types(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    """Test handling of Path objects and lists (nested structures)."""
+    # Create nodes
+    n1 = mocker.create_autospec(Node, instance=True)
+    n1.element_id = "n1"
+    n1.labels = {"A"}
+    n1.items.return_value = [("p", 1)]
+
+    n2 = mocker.create_autospec(Node, instance=True)
+    n2.element_id = "n2"
+    n2.labels = {"B"}
+    n2.items.return_value = [("p", 2)]
+
+    # Create relationship
+    r1 = mocker.create_autospec(Relationship, instance=True)
+    r1.start_node.element_id = "n1"
+    r1.end_node.element_id = "n2"
+    r1.type = "LINK"
+    r1.items.return_value = []
+
+    # Mock Path
+    path_mock = mocker.create_autospec(Path, instance=True)
+    path_mock.nodes = [n1, n2]
+    path_mock.relationships = [r1]
+
+    # Mock List of Nodes (e.g. from collect(n))
+    list_mock = [n1, n2]
+
+    # Record returning a path and a list
+    record_mock = MagicMock()
+    record_mock.values.return_value = [path_mock, list_mock]
+
+    mock_driver.execute_query.return_value = ([record_mock], None, None)
+
+    graph = client.to_networkx("MATCH path, collect(n)...")
+
+    assert "n1" in graph.nodes
+    assert "n2" in graph.nodes
+    assert ("n1", "n2") in graph.edges
 
 
 def test_to_networkx_legacy_id_fallback(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:

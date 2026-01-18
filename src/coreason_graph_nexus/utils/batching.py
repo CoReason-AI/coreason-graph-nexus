@@ -45,8 +45,6 @@ def process_and_batch(
     # Batch and Consume
     for batch_tuple in batched(processed_stream, batch_size):
         batch_list = list(batch_tuple)
-        if not batch_list:
-            continue
 
         try:
             consumer(batch_list)
