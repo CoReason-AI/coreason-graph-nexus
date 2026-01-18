@@ -136,3 +136,22 @@ def test_merge_nodes_invalid_keys(mock_driver: MagicMock) -> None:
     client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
     with pytest.raises(ValueError, match="merge_keys must not be empty"):
         client.merge_nodes("L", [], merge_keys=[])
+
+
+def test_batch_write_generator_exception(mock_driver: MagicMock) -> None:
+    """Test that if the input generator raises an exception, it propagates."""
+    driver_instance = mock_driver.return_value
+    driver_instance.execute_query.return_value = ([], None, None)
+
+    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+
+    def fail_gen():
+        yield {"id": 1}
+        raise ValueError("Generator Failed")
+
+    # We use batch_size=1 so the first yield is processed before the error
+    with pytest.raises(ValueError, match="Generator Failed"):
+        client.batch_write("Q", fail_gen(), batch_size=1)
+
+    # Should have called execute_query once for the first item
+    assert driver_instance.execute_query.call_count == 1

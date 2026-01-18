@@ -11,6 +11,9 @@
 import os
 from unittest.mock import patch
 
+import pytest
+from pydantic import ValidationError
+
 from coreason_graph_nexus.config import Settings
 
 
@@ -29,3 +32,10 @@ def test_settings_from_env() -> None:
         settings = Settings()
         assert settings.neo4j_uri == "bolt://test:1234"
         assert settings.default_batch_size == 500
+
+
+def test_settings_invalid_type() -> None:
+    """Test that invalid types raise ValidationError."""
+    with patch.dict(os.environ, {"DEFAULT_BATCH_SIZE": "not-an-int"}):
+        with pytest.raises(ValidationError):
+            Settings()

@@ -675,3 +675,43 @@ def test_ingest_relationships_exception_handling(
 
     with pytest.raises(Exception, match="Source DB Error"):
         engine.ingest_relationships(sample_manifest, adapter, graph_job)
+
+
+def test_ingest_entities_mixed_scenario(
+    mock_neo4j_client: MagicMock,
+    drug_only_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """
+    Test a mix of:
+    - Valid row
+    - Missing ID row (skip)
+    - Ontology miss row (process but fallback)
+    """
+    data = {
+        "drugs": [
+            {"drug_id": "Valid1", "name": "V1"},
+            {"name": "MissingID"},
+            {"drug_id": "Miss1", "name": "M1"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    resolver = MockOntologyResolver({"Valid1": "Resolved1"})
+
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job, batch_size=10)
+
+    # 2 rows processed (Valid1, Miss1). MissingID is skipped.
+    assert graph_job.metrics["nodes_created"] == 2.0
+
+    # 1 ontology miss (Miss1)
+    assert graph_job.metrics["ontology_misses"] == 1.0
+
+    args, _ = mock_neo4j_client.merge_nodes.call_args
+    batch_data = args[1]
+
+    assert len(batch_data) == 2
+    assert batch_data[0]["id"] == "Resolved1"
+    assert batch_data[1]["id"] == "Miss1"
