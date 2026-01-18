@@ -40,9 +40,7 @@ def process_and_batch(
     processed_count = 0
 
     # Generator: Process items lazily
-    processed_stream: Iterator[R] = (
-        result for item in items if (result := processor(item)) is not None
-    )
+    processed_stream: Iterator[R] = (result for item in items if (result := processor(item)) is not None)
 
     # Batch and Consume
     for batch_tuple in batched(processed_stream, batch_size):

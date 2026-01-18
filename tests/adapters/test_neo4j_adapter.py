@@ -8,14 +8,15 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-import pytest
-import networkx as nx
-from unittest.mock import MagicMock
-from pytest_mock import MockFixture
 from typing import Any
+from unittest.mock import MagicMock
+
+import networkx as nx
+import pytest
+from neo4j.graph import Node, Relationship
+from pytest_mock import MockFixture
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
-from neo4j.graph import Node, Relationship
 
 
 @pytest.fixture

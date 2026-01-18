@@ -8,9 +8,10 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from typing import Iterable
+
 import pytest
 from pytest_mock import MockFixture
-from typing import Any, Iterable
 
 from coreason_graph_nexus.utils.batching import process_and_batch
 
