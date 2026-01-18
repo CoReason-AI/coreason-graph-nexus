@@ -237,3 +237,41 @@ class GraphAnalysisRequest(BaseModel):
         default="pagerank_score",
         description="The property key to write results back to (for PageRank/Louvain).",
     )
+
+
+class LinkPredictionMethod(str, Enum):
+    """
+    Enumeration of supported link prediction methods.
+    """
+
+    HEURISTIC = "heuristic"
+    SEMANTIC = "semantic"
+
+
+class LinkPredictionRequest(BaseModel):
+    """
+    Request object for running link prediction.
+
+    Attributes:
+        method: The method to use for prediction (HEURISTIC or SEMANTIC).
+        heuristic_query: The Cypher query to execute for rule-based prediction.
+                         Required if method is HEURISTIC.
+    """
+
+    method: LinkPredictionMethod = Field(description="The method to use for prediction (HEURISTIC or SEMANTIC).")
+    heuristic_query: str | None = Field(
+        default=None,
+        description="The Cypher query to execute for rule-based prediction. Required if method is HEURISTIC.",
+    )
+
+    @model_validator(mode="after")
+    def validate_heuristic_query(self) -> "LinkPredictionRequest":
+        """
+        Validates that heuristic_query is present and non-empty if method is HEURISTIC.
+        """
+        if self.method == LinkPredictionMethod.HEURISTIC:
+            if not self.heuristic_query or not self.heuristic_query.strip():
+                raise ValueError(
+                    "heuristic_query is required and cannot be empty/whitespace for HEURISTIC prediction method."
+                )
+        return self
