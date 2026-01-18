@@ -19,13 +19,6 @@ from neo4j.exceptions import ServiceUnavailable
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 
 
-@pytest.fixture
-def mock_driver() -> Generator[MagicMock, None, None]:
-    """Mock the neo4j.GraphDatabase.driver."""
-    with patch("coreason_graph_nexus.adapters.neo4j_adapter.GraphDatabase.driver") as mock:
-        yield mock
-
-
 def test_initialization(mock_driver: MagicMock) -> None:
     """Test that the client initializes the driver correctly."""
     client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))

@@ -8,6 +8,8 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from collections.abc import Iterable
+from itertools import batched
 from types import TracebackType
 from typing import Any, Self
 
@@ -16,6 +18,7 @@ from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 from neo4j.graph import Node, Path, Relationship
 
+from coreason_graph_nexus.config import settings
 from coreason_graph_nexus.utils.logger import logger
 
 
@@ -122,50 +125,51 @@ class Neo4jClient:
     def batch_write(
         self,
         query: str,
-        data: list[dict[str, Any]],
-        batch_size: int = 10000,
+        data: Iterable[dict[str, Any]],
+        batch_size: int = settings.default_batch_size,
         batch_param_name: str = "batch",
     ) -> None:
         """
-        Executes a Cypher query in batches.
+        Executes a Cypher query in batches using an iterator/iterable.
 
         This method is designed for high-throughput ingestion using the UNWIND pattern.
-        The data list is sliced into chunks, and each chunk is passed as a parameter
+        The data iterable is processed in chunks, and each chunk is passed as a parameter
         to the Cypher query.
 
         Args:
             query: The Cypher query string. It should typically start with
                    'UNWIND $batch AS row ...' (where 'batch' matches batch_param_name).
-            data: A list of dictionaries to be ingested.
+            data: An iterable of dictionaries to be ingested.
             batch_size: The number of records to process in a single transaction.
             batch_param_name: The key used in the parameters dictionary for the list.
         """
         if batch_size <= 0:
             raise ValueError(f"Batch size must be positive, got {batch_size}")
 
-        if not data:
-            logger.info("No data provided for batch write.")
-            return
+        logger.info(f"Starting batch write with batch_size={batch_size}")
 
-        total = len(data)
-        logger.info(f"Starting batch write: {total} records, batch_size={batch_size}")
-
-        for i in range(0, total, batch_size):
-            chunk = data[i : i + batch_size]
+        count = 0
+        for chunk in batched(data, batch_size):
+            # Convert tuple from batched to list for Neo4j driver
+            chunk_list = list(chunk)
             try:
-                self.execute_query(query, parameters={batch_param_name: chunk})
+                self.execute_query(query, parameters={batch_param_name: chunk_list})
+                count += len(chunk_list)
             except Exception as e:
-                logger.error(f"Batch write failed at index {i} (processing {len(chunk)} records): {e}")
+                logger.error(f"Batch write failed after processing {count} records: {e}")
                 raise
 
-        logger.info(f"Batch write completed: {total} records processed.")
+        if count == 0:
+            logger.info("No data provided for batch write.")
+        else:
+            logger.info(f"Batch write completed: {count} records processed.")
 
     def merge_nodes(
         self,
         label: str,
-        data: list[dict[str, Any]],
+        data: Iterable[dict[str, Any]],
         merge_keys: list[str],
-        batch_size: int = 10000,
+        batch_size: int = settings.default_batch_size,
     ) -> None:
         """
         Ingests nodes using an idempotent MERGE operation in batches.
@@ -176,7 +180,7 @@ class Neo4jClient:
 
         Args:
             label: The primary label for the nodes (e.g., "Person").
-            data: A list of dictionaries containing node properties.
+            data: An iterable of dictionaries containing node properties.
             merge_keys: A list of property keys used to uniquely identify the node
                         (e.g., ["id"] or ["firstName", "lastName"]).
             batch_size: The number of records to process per transaction.
@@ -202,10 +206,10 @@ class Neo4jClient:
         end_label: str,
         end_data_key: str,
         rel_type: str,
-        data: list[dict[str, Any]],
+        data: Iterable[dict[str, Any]],
         start_node_prop: str = "id",
         end_node_prop: str = "id",
-        batch_size: int = 10000,
+        batch_size: int = settings.default_batch_size,
     ) -> None:
         """
         Ingests relationships using an idempotent MERGE operation in batches.
@@ -220,7 +224,7 @@ class Neo4jClient:
             end_label: The label of the end node.
             end_data_key: The key in the input `data` dictionary that contains the end node identifier.
             rel_type: The relationship type (e.g., "KNOWS").
-            data: A list of dictionaries.
+            data: An iterable of dictionaries.
             start_node_prop: The property name on the start node to match against (default: "id").
             end_node_prop: The property name on the end node to match against (default: "id").
             batch_size: The number of records to process per transaction.

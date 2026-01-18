@@ -8,12 +8,14 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from coreason_graph_nexus.utils.logger import logger, configure_logging
+from collections.abc import Generator
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
-def hello_world() -> str:
-    # Initialize logging (idempotent setup for file sink)
-    configure_logging()
-
-    logger.info("Hello World!")
-    return "Hello World!"
+@pytest.fixture
+def mock_driver() -> Generator[MagicMock, None, None]:
+    """Mock the neo4j.GraphDatabase.driver."""
+    with patch("coreason_graph_nexus.adapters.neo4j_adapter.GraphDatabase.driver") as mock:
+        yield mock

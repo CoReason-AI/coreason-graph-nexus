@@ -13,7 +13,9 @@ from pathlib import Path
 
 from loguru import logger
 
-__all__ = ["logger"]
+from coreason_graph_nexus.config import settings
+
+__all__ = ["logger", "configure_logging"]
 
 # Remove default handler
 logger.remove()
@@ -21,7 +23,7 @@ logger.remove()
 # Sink 1: Stdout (Human-readable)
 logger.add(
     sys.stderr,
-    level="INFO",
+    level=settings.log_level,
     format=(
         "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
         "<level>{level: <8}</level> | "
@@ -30,17 +32,24 @@ logger.add(
     ),
 )
 
-# Ensure logs directory exists
-log_path = Path("logs")
-if not log_path.exists():
-    log_path.mkdir(parents=True, exist_ok=True)  # pragma: no cover
 
-# Sink 2: File (JSON, Rotation, Retention)
-logger.add(
-    "logs/app.log",
-    rotation="500 MB",
-    retention="10 days",
-    serialize=True,
-    enqueue=True,
-    level="INFO",
-)
+def configure_logging() -> None:
+    """
+    Configures the file logging sink.
+    This should be called at the application entry point.
+    """
+    log_path = Path("logs")
+    if not log_path.exists():
+        log_path.mkdir(parents=True, exist_ok=True)  # pragma: no cover
+
+    # Sink 2: File (JSON, Rotation, Retention)
+    # We use a hardcoded path relative to CWD as per original design,
+    # but now explicit initialization.
+    logger.add(
+        "logs/app.log",
+        rotation="500 MB",
+        retention="10 days",
+        serialize=True,
+        enqueue=True,
+        level=settings.log_level,
+    )
