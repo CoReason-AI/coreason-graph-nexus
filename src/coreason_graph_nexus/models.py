@@ -271,5 +271,7 @@ class LinkPredictionRequest(BaseModel):
         """
         if self.method == LinkPredictionMethod.HEURISTIC:
             if not self.heuristic_query or not self.heuristic_query.strip():
-                raise ValueError("heuristic_query is required and cannot be empty/whitespace for HEURISTIC prediction method.")
+                raise ValueError(
+                    "heuristic_query is required and cannot be empty/whitespace for HEURISTIC prediction method."
+                )
         return self

@@ -8,6 +8,8 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -20,8 +22,7 @@ def test_link_prediction_request_validation() -> None:
 
     # Valid Request
     request = LinkPredictionRequest(
-        method=LinkPredictionMethod.HEURISTIC,
-        heuristic_query="MATCH (a), (b) MERGE (a)-[:LINK]->(b)"
+        method=LinkPredictionMethod.HEURISTIC, heuristic_query="MATCH (a), (b) MERGE (a)-[:LINK]->(b)"
     )
     assert request.method == LinkPredictionMethod.HEURISTIC
     assert request.heuristic_query == "MATCH (a), (b) MERGE (a)-[:LINK]->(b)"
@@ -41,23 +42,17 @@ def test_link_prediction_request_whitespace_validation() -> None:
 
     # Invalid Request: Whitespace query
     with pytest.raises(ValidationError) as exc:
-        LinkPredictionRequest(
-            method=LinkPredictionMethod.HEURISTIC,
-            heuristic_query="   "
-        )
+        LinkPredictionRequest(method=LinkPredictionMethod.HEURISTIC, heuristic_query="   ")
     assert "cannot be empty/whitespace" in str(exc.value)
 
 
-def test_heuristic_prediction_execution(mocker) -> None:
+def test_heuristic_prediction_execution(mocker: Any) -> None:
     """Test that heuristic prediction executes the cypher query."""
     mock_client = mocker.Mock()
     predictor = LinkPredictor(client=mock_client)
 
     query = "MATCH (a:Author), (p:Paper) WHERE (a)-[:WROTE]->(p) MERGE (a)-[:EXPERT_ON]->(p)"
-    request = LinkPredictionRequest(
-        method=LinkPredictionMethod.HEURISTIC,
-        heuristic_query=query
-    )
+    request = LinkPredictionRequest(method=LinkPredictionMethod.HEURISTIC, heuristic_query=query)
 
     predictor.predict_links(request)
 
@@ -65,7 +60,7 @@ def test_heuristic_prediction_execution(mocker) -> None:
     mock_client.execute_query.assert_called_once_with(query)
 
 
-def test_complex_heuristic_query_execution(mocker) -> None:
+def test_complex_heuristic_query_execution(mocker: Any) -> None:
     """Test execution of a complex, multi-line Cypher query."""
     mock_client = mocker.Mock()
     predictor = LinkPredictor(client=mock_client)
@@ -76,10 +71,7 @@ def test_complex_heuristic_query_execution(mocker) -> None:
     WHERE post_count > 100
     MERGE (u)-[:POWER_USER]->(u)
     """
-    request = LinkPredictionRequest(
-        method=LinkPredictionMethod.HEURISTIC,
-        heuristic_query=query
-    )
+    request = LinkPredictionRequest(method=LinkPredictionMethod.HEURISTIC, heuristic_query=query)
 
     predictor.predict_links(request)
 
@@ -87,24 +79,21 @@ def test_complex_heuristic_query_execution(mocker) -> None:
     mock_client.execute_query.assert_called_once_with(query)
 
 
-def test_semantic_prediction_with_unused_query(mocker) -> None:
+def test_semantic_prediction_with_unused_query(mocker: Any) -> None:
     """Test semantic prediction request with a heuristic query provided (should be ignored by logic but valid model)."""
     mock_client = mocker.Mock()
     predictor = LinkPredictor(client=mock_client)
 
     # It is valid to provide heuristic_query even if method is SEMANTIC (Pydantic doesn't forbid it)
     # But the predictor should still attempt SEMANTIC logic and raise NotImplementedError
-    request = LinkPredictionRequest(
-        method=LinkPredictionMethod.SEMANTIC,
-        heuristic_query="MATCH (n) RETURN n"
-    )
+    request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, heuristic_query="MATCH (n) RETURN n")
 
     with pytest.raises(NotImplementedError) as exc:
         predictor.predict_links(request)
     assert "Semantic link prediction is not yet implemented" in str(exc.value)
 
 
-def test_semantic_prediction_not_implemented(mocker) -> None:
+def test_semantic_prediction_not_implemented(mocker: Any) -> None:
     """Test that semantic prediction raises NotImplementedError."""
     mock_client = mocker.Mock()
     predictor = LinkPredictor(client=mock_client)
@@ -116,23 +105,20 @@ def test_semantic_prediction_not_implemented(mocker) -> None:
     assert "Semantic link prediction is not yet implemented" in str(exc.value)
 
 
-def test_heuristic_execution_failure(mocker) -> None:
+def test_heuristic_execution_failure(mocker: Any) -> None:
     """Test handling of execution failure."""
     mock_client = mocker.Mock()
     mock_client.execute_query.side_effect = Exception("Neo4j Error")
 
     predictor = LinkPredictor(client=mock_client)
-    request = LinkPredictionRequest(
-        method=LinkPredictionMethod.HEURISTIC,
-        heuristic_query="INVALID QUERY"
-    )
+    request = LinkPredictionRequest(method=LinkPredictionMethod.HEURISTIC, heuristic_query="INVALID QUERY")
 
     with pytest.raises(Exception) as exc:
         predictor.predict_links(request)
     assert "Neo4j Error" in str(exc.value)
 
 
-def test_unknown_method_raises_error(mocker) -> None:
+def test_unknown_method_raises_error(mocker: Any) -> None:
     """Test that unknown method raises NotImplementedError."""
     mock_client = mocker.Mock()
     predictor = LinkPredictor(client=mock_client)
@@ -151,7 +137,7 @@ def test_unknown_method_raises_error(mocker) -> None:
     assert "is not implemented" in str(exc.value)
 
 
-def test_heuristic_query_missing_defensive_check(mocker) -> None:
+def test_heuristic_query_missing_defensive_check(mocker: Any) -> None:
     """Test defensive check for missing heuristic query."""
     mock_client = mocker.Mock()
     predictor = LinkPredictor(client=mock_client)
