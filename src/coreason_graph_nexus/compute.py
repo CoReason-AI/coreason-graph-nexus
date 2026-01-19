@@ -45,6 +45,10 @@ class GraphComputer:
 
         Returns:
             The result of the analysis (structure depends on the algorithm).
+
+        Raises:
+            ValueError: If required parameters for specific algorithms are missing.
+            NotImplementedError: If the requested algorithm is not implemented.
         """
         logger.info(
             f"Starting analysis: {request.algorithm.value} (center={request.center_node_id}, depth={request.depth})"
@@ -78,7 +82,7 @@ class GraphComputer:
             depth: The number of hops.
 
         Returns:
-            A NetworkX DiGraph.
+            A NetworkX DiGraph representing the subgraph.
         """
         # We try to match by property 'id' first (business key), then fallback/OR to elementId checks if needed?
         # Ideally, center_id corresponds to the 'id' property stored on nodes.
@@ -93,6 +97,13 @@ class GraphComputer:
     def _compute_pagerank(self, graph: nx.DiGraph, write_property: str) -> dict[str, float]:
         """
         Computes PageRank and writes scores back to Neo4j.
+
+        Args:
+            graph: The in-memory graph.
+            write_property: The property key to update in Neo4j.
+
+        Returns:
+            A dictionary mapping node IDs to PageRank scores.
         """
         if graph.number_of_nodes() == 0:
             return {}
@@ -106,11 +117,6 @@ class GraphComputer:
         # If keys are business IDs, the query below needs to be adjusted.
         # Neo4jClient.to_networkx uses element_id if available.
         # So we match on elementId(n).
-
-        # However, to be safe for both cases (if to_networkx fell back to 'id'),
-        # we might need to know which one it is.
-        # But Neo4j 5+ standard is elementId.
-        # Let's assume the keys are valid identifiers for lookup.
 
         data = [{"id": k, "value": v} for k, v in scores.items()]
 
@@ -131,11 +137,14 @@ class GraphComputer:
 
         Args:
             graph: The subgraph.
-            source: Source node ID (as passed in request - might act as filter or need mapping).
-            target: Target node ID.
+            source: Source node ID (as passed in request - business ID).
+            target: Target node ID (as passed in request - business ID).
 
         Returns:
             List of node IDs in the path.
+
+        Raises:
+            ValueError: If source or target node is not found in the subgraph.
         """
         # Problem: 'source' and 'target' strings passed here are likely business IDs (e.g., 'RxNorm:123').
         # The 'graph' nodes are keyed by Neo4j element_id (internal ID) because of to_networkx.
@@ -170,6 +179,13 @@ class GraphComputer:
     def _compute_louvain(self, graph: nx.DiGraph, write_property: str) -> dict[str, int]:
         """
         Computes Louvain communities and writes ID back to Neo4j.
+
+        Args:
+            graph: The in-memory graph.
+            write_property: The property key to update in Neo4j.
+
+        Returns:
+            A dictionary mapping node IDs to community IDs.
         """
         if graph.number_of_nodes() == 0:
             return {}

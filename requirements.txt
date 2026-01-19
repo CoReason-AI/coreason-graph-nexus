@@ -1,0 +1,10 @@
+loguru>=0.7.2
+pydantic>=2.12.5
+pydantic-settings>=2.0.0
+pyyaml>=6.0.3
+neo4j>=6.0.3
+redis>=7.1.0
+networkx>=3.2.1
+numpy>=2.4.1
+scipy>=1.17.0
+scikit-learn>=1.8.0
