@@ -1,36 +1,34 @@
 # coreason-graph-nexus
 
-**Graph Orchestration & Reasoning Engine**
+> **The Graph Orchestration & Reasoning Engine**
 
-The "Platinum Layer" Builder and Graph Logic Engine. A hybrid system combining Neo4j for robust storage and NetworkX for fast, in-memory reasoning.
+[![Organization](https://img.shields.io/badge/org-CoReason--AI-blue)](https://github.com/CoReason-AI)
+[![License: Prosperity 3.0](https://img.shields.io/badge/license-Prosperity%203.0-blue)](https://prosperitylicense.com/versions/3.0.0)
+[![CI](https://github.com/CoReason-AI/coreason-graph-nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/CoReason-AI/coreason-graph-nexus/actions)
+[![Code Style: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Documentation](https://img.shields.io/badge/docs-Product%20Requirements-green)](docs/product_requirements.md)
 
-[![License](https://img.shields.io/badge/License-Prosperity%203.0-blue.svg)](https://github.com/CoReason-AI/coreason_graph_nexus/blob/main/LICENSE)
-[![CI](https://github.com/CoReason-AI/coreason_graph_nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/CoReason-AI/coreason_graph_nexus/actions/workflows/ci.yml)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+**coreason-graph-nexus** acts as the "Platinum Layer" Builder and Graph Logic Engine. It bridges the gap between persistent graph storage (Neo4j) and high-speed in-memory reasoning (NetworkX), ensuring robust data ingestion, ontology alignment, and advanced algorithmic analysis.
 
-## Installation
+---
+
+## 🚀 Features
+
+*   **Hybrid Compute Architecture:** Seamlessly moves data between Cold Storage (Neo4j) and Hot Compute (NetworkX) for on-demand analysis.
+*   **Projection Engine (The Builder):** Declarative ETL pipeline that transforms raw data into a semantic graph, enforcing schema constraints.
+*   **Ontology Resolver (The Librarian):**  Standardizes entity identities (e.g., merging "Tylenol" and "APAP") with high-performance Redis caching.
+*   **Graph Computer (The Thinker):** Executes complex algorithms like PageRank, Betweenness Centrality, and Community Detection in memory.
+*   **Link Predictor (The Analyst):** Infers implicit relationships using both heuristic rules and semantic vector embeddings.
+
+## 📦 Installation
 
 ```bash
 pip install coreason-graph-nexus
 ```
 
-## Features
+## 🛠️ Usage
 
-**1. The Builder (ETL)**
-   - Transforms static data (SQL, Parquet) into a connected semantic fabric in Neo4j.
-   - **Universal Identity Resolution:** Maps source terms (e.g., "Tylenol") to canonical concepts (e.g., "RxNorm:161") using a cached ontology resolver.
-   - **Performance:** Utilizes `UNWIND` Cypher batches and Redis caching for high-speed ingestion.
-
-**2. The Thinker (Compute)**
-   - **Hybrid Architecture:** Uses Neo4j for cold storage and NetworkX for hot, in-memory compute.
-   - **Graph Algorithms:** Projects subgraphs to run PageRank, Shortest Path, and Community Detection (Louvain) on the fly.
-   - **Write-Back:** Persists algorithmic scores back to Neo4j.
-
-**3. The Analyst (Link Prediction)**
-   - **Heuristic:** Executes rule-based predictions via Cypher queries.
-   - **Semantic:** Infers implicit links using vector embeddings and cosine similarity.
-
-## Usage
+Here is a quick example of how to initialize the client and run a PageRank analysis:
 
 ```python
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
@@ -38,20 +36,27 @@ from coreason_graph_nexus.compute import GraphComputer
 from coreason_graph_nexus.models import GraphAnalysisRequest, AnalysisAlgo
 
 # 1. Initialize Connection
-client = Neo4jClient(uri="bolt://localhost:7687", auth=("neo4j", "password"))
+neo4j_auth = ("neo4j", "password")
+with Neo4jClient(uri="bolt://localhost:7687", auth=neo4j_auth) as client:
 
-# 2. Run Graph Analysis (The Thinker)
-computer = GraphComputer(client)
+    # 2. Initialize the Graph Computer
+    computer = GraphComputer(client)
 
-# Request PageRank on a subgraph centered at a node with depth 2
-request = GraphAnalysisRequest(
-    center_node_id="RxNorm:161",
-    algorithm=AnalysisAlgo.PAGERANK,
-    depth=2
-)
+    # 3. Define Analysis Request
+    request = GraphAnalysisRequest(
+        center_node_id="RxNorm:123",
+        algorithm=AnalysisAlgo.PAGERANK,
+        depth=2,
+        write_property="pagerank_score"
+    )
 
-with client:
-    # Projects subgraph to NetworkX -> Computes PageRank -> Writes back to Neo4j
+    # 4. Run Analysis
     results = computer.run_analysis(request)
-    print(f"PageRank Scores: {results}")
+    print(f"Computed PageRank for {len(results)} nodes.")
 ```
+
+## 📄 License
+
+This software is dual-licensed. It is available under the **Prosperity Public License 3.0** for open-source and non-commercial use. Commercial use beyond a 30-day trial requires a separate license.
+
+Copyright (c) 2025 CoReason, Inc.
