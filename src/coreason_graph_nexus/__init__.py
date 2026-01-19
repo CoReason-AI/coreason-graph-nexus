@@ -17,5 +17,6 @@ __author__ = "Gowtham A Rao"
 __email__ = "gowtham.rao@coreason.ai"
 
 from .main import hello_world
+from .service import Service, ServiceAsync
 
-__all__ = ["hello_world"]
+__all__ = ["hello_world", "Service", "ServiceAsync"]

@@ -10,15 +10,15 @@
 
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
-from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
+from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient, Neo4jClientAsync
 from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
 from coreason_graph_nexus.models import Entity, GraphJob, ProjectionManifest, PropertyMapping, Relationship
-from coreason_graph_nexus.projector import ProjectionEngine
+from coreason_graph_nexus.projector import ProjectionEngine, ProjectionEngineAsync
 
 # --- Mocks ---
 
@@ -68,6 +68,14 @@ class MockOntologyResolver(OntologyResolver):
 @pytest.fixture
 def mock_neo4j_client() -> MagicMock:
     return MagicMock(spec=Neo4jClient)
+
+
+@pytest.fixture
+def mock_neo4j_client_async() -> MagicMock:
+    mock = MagicMock(spec=Neo4jClientAsync)
+    mock.merge_nodes = AsyncMock()
+    mock.merge_relationships = AsyncMock()
+    return mock
 
 
 @pytest.fixture
@@ -153,7 +161,7 @@ def graph_job() -> GraphJob:
     return GraphJob(id=uuid4(), manifest_path="test.yaml", status="RESOLVING")
 
 
-# --- Tests ---
+# --- Tests (Sync) ---
 
 
 def test_ingest_entities_happy_path(
@@ -771,3 +779,68 @@ def test_ingest_relationships_cache_hit(
     assert graph_job.metrics["edges_created"] == 1.0
     assert graph_job.metrics["ontology_cache_hits"] == 2.0
     assert graph_job.metrics["ontology_misses"] == 0.0
+
+
+# --- Tests (Async) ---
+
+
+@pytest.mark.asyncio
+async def test_ingest_entities_async(
+    mock_neo4j_client_async: MagicMock,
+    mock_adapter: MockSourceAdapter,
+    mock_resolver: MockOntologyResolver,
+    drug_only_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    engine = ProjectionEngineAsync(mock_neo4j_client_async, mock_resolver)
+
+    await engine.ingest_entities(drug_only_manifest, mock_adapter, graph_job, batch_size=10)
+
+    assert graph_job.metrics["nodes_created"] == 2.0
+    mock_neo4j_client_async.merge_nodes.assert_called_once()
+    args, kwargs = mock_neo4j_client_async.merge_nodes.call_args
+    assert len(args[1]) == 2
+
+
+@pytest.mark.asyncio
+async def test_ingest_relationships_async(
+    mock_neo4j_client_async: MagicMock,
+    mock_adapter: MockSourceAdapter,
+    mock_resolver: MockOntologyResolver,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    engine = ProjectionEngineAsync(mock_neo4j_client_async, mock_resolver)
+
+    await engine.ingest_relationships(sample_manifest, mock_adapter, graph_job, batch_size=10)
+
+    assert graph_job.metrics["edges_created"] == 2.0
+    mock_neo4j_client_async.merge_relationships.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ingest_entities_async_exception(
+    mock_neo4j_client_async: MagicMock,
+    drug_only_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    adapter = MagicMock(spec=SourceAdapter)
+    adapter.read_table.side_effect = Exception("Async Error")
+    engine = ProjectionEngineAsync(mock_neo4j_client_async, MockOntologyResolver())
+
+    with pytest.raises(Exception, match="Async Error"):
+        await engine.ingest_entities(drug_only_manifest, adapter, graph_job)
+
+
+@pytest.mark.asyncio
+async def test_ingest_relationships_async_exception(
+    mock_neo4j_client_async: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    adapter = MagicMock(spec=SourceAdapter)
+    adapter.read_table.side_effect = Exception("Async Rel Error")
+    engine = ProjectionEngineAsync(mock_neo4j_client_async, MockOntologyResolver())
+
+    with pytest.raises(Exception, match="Async Rel Error"):
+        await engine.ingest_relationships(sample_manifest, adapter, graph_job)
