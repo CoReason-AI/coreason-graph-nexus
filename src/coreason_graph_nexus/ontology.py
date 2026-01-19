@@ -22,7 +22,9 @@ class RedisClientProtocol(Protocol):
     def setex(self, key: str, time: int, value: str) -> Any: ...
 
 
-def cached_resolver(ttl: int = 86400) -> Callable[[Callable[[Any, str], str | None]], Callable[[Any, str], str | None]]:
+def cached_resolver(
+    ttl: int = 86400,
+) -> Callable[[Callable[[Any, str], str | None]], Callable[[Any, str], tuple[str | None, bool]]]:
     """
     Decorator to cache the result of an ontology resolution method in Redis.
 
@@ -34,12 +36,14 @@ def cached_resolver(ttl: int = 86400) -> Callable[[Callable[[Any, str], str | No
         ttl: Time to live in seconds (default: 24h).
     """
 
-    def decorator(func: Callable[[Any, str], str | None]) -> Callable[[Any, str], str | None]:
+    def decorator(
+        func: Callable[[Any, str], str | None],
+    ) -> Callable[[Any, str], tuple[str | None, bool]]:
         @functools.wraps(func)
-        def wrapper(self: Any, term: str) -> str | None:
+        def wrapper(self: Any, term: str) -> tuple[str | None, bool]:
             if not hasattr(self, "redis_client") or self.redis_client is None:
                 logger.warning("Redis client not available in self.redis_client. Skipping cache.")
-                return func(self, term)
+                return func(self, term), False
 
             key = f"resolve:{term}"
             try:
@@ -47,7 +51,8 @@ def cached_resolver(ttl: int = 86400) -> Callable[[Callable[[Any, str], str | No
                 if cached:
                     logger.debug(f"Cache hit for '{term}': {cached}")
                     # Redis returns bytes, decode to str
-                    return cached.decode("utf-8") if isinstance(cached, bytes) else str(cached)
+                    val = cached.decode("utf-8") if isinstance(cached, bytes) else str(cached)
+                    return val, True
             except Exception as e:
                 logger.error(f"Redis get failed for key {key}: {e}")
 
@@ -61,7 +66,7 @@ def cached_resolver(ttl: int = 86400) -> Callable[[Callable[[Any, str], str | No
                 except Exception as e:
                     logger.error(f"Redis setex failed for key {key}: {e}")
 
-            return result
+            return result, False
 
         return wrapper
 
@@ -108,11 +113,11 @@ class RedisOntologyResolver(OntologyResolver):
         self.redis_client = redis_client
         self.codex_client = codex_client or CodexClient()
 
-    @cached_resolver(ttl=86400)
-    def resolve(self, term: str) -> str | None:
+    @cached_resolver(ttl=86400)  # type: ignore[arg-type]
+    def resolve(self, term: str) -> tuple[str | None, bool]:
         """
         Resolves a term to a canonical ID.
 
         Checks Redis first (via decorator). If miss, calls Codex.
         """
-        return self.codex_client.lookup_concept(term)
+        return self.codex_client.lookup_concept(term)  # type: ignore[return-value]

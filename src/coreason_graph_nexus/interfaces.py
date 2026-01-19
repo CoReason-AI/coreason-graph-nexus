@@ -68,7 +68,7 @@ class OntologyResolver(ABC):
     """
 
     @abstractmethod
-    def resolve(self, term: str) -> str | None:
+    def resolve(self, term: str) -> tuple[str | None, bool]:
         """
         Resolves a source term to a canonical identifier.
 
@@ -76,6 +76,6 @@ class OntologyResolver(ABC):
             term: The source string to resolve.
 
         Returns:
-            The canonical identifier (str) if found, or None.
+            A tuple of (canonical identifier (str) | None, is_cache_hit (bool)).
         """
         ...

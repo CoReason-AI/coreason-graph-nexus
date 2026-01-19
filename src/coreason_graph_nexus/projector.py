@@ -141,12 +141,14 @@ class ProjectionEngine:
 
         # Resolve Ontology
         term_to_resolve = str(source_id)
-        resolved_id = self.resolver.resolve(term_to_resolve)
+        resolved_id, is_cache_hit = self.resolver.resolve(term_to_resolve)
 
         final_id = resolved_id if resolved_id else term_to_resolve
 
         if not resolved_id:
             job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
+        elif is_cache_hit:
+            job.metrics["ontology_cache_hits"] = float(job.metrics.get("ontology_cache_hits", 0.0)) + 1.0
 
         # Map Properties
         node_props = {}
@@ -173,21 +175,25 @@ class ProjectionEngine:
 
         # Resolve Start Node
         start_term = str(source_start)
-        resolved_start = self.resolver.resolve(start_term)
+        resolved_start, is_start_cache_hit = self.resolver.resolve(start_term)
         if not resolved_start:
             job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
             final_start = start_term
         else:
             final_start = resolved_start
+            if is_start_cache_hit:
+                job.metrics["ontology_cache_hits"] = float(job.metrics.get("ontology_cache_hits", 0.0)) + 1.0
 
         # Resolve End Node
         end_term = str(source_end)
-        resolved_end = self.resolver.resolve(end_term)
+        resolved_end, is_end_cache_hit = self.resolver.resolve(end_term)
         if not resolved_end:
             job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
             final_end = end_term
         else:
             final_end = resolved_end
+            if is_end_cache_hit:
+                job.metrics["ontology_cache_hits"] = float(job.metrics.get("ontology_cache_hits", 0.0)) + 1.0
 
         # Prepare Relationship Properties
         rel_props = row.copy()

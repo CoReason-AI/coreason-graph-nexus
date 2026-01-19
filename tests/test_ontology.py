@@ -38,9 +38,10 @@ class TestRedisOntologyResolver:
         mock_redis.get.return_value = b"RxNorm:123"  # Redis returns bytes
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result = resolver.resolve("Tylenol")
+        result, is_hit = resolver.resolve("Tylenol")
 
         assert result == "RxNorm:123"
+        assert is_hit is True
         mock_redis.get.assert_called_once_with("resolve:Tylenol")
         mock_codex_client.lookup_concept.assert_not_called()
 
@@ -54,9 +55,10 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = "RxNorm:456"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result = resolver.resolve("Advil")
+        result, is_hit = resolver.resolve("Advil")
 
         assert result == "RxNorm:456"
+        assert is_hit is False
         mock_redis.get.assert_called_once_with("resolve:Advil")
         mock_codex_client.lookup_concept.assert_called_once_with("Advil")
         # Verify it writes back to Redis with 24h TTL (86400 seconds)
@@ -72,9 +74,10 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = None
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result = resolver.resolve("UnknownDrug")
+        result, is_hit = resolver.resolve("UnknownDrug")
 
         assert result is None
+        assert is_hit is False
         mock_codex_client.lookup_concept.assert_called_once_with("UnknownDrug")
         mock_redis.setex.assert_not_called()
 
@@ -96,14 +99,16 @@ class TestRedisOntologyResolver:
 
         # Scenario 1: Cache Miss
         mock_redis.get.return_value = None
-        result = service.resolve("Test")
+        result, is_hit = service.resolve("Test")
         assert result == "Computed:Test"
+        assert is_hit is False
         mock_redis.setex.assert_called_with("resolve:Test", 100, "Computed:Test")
 
         # Scenario 2: Cache Hit
         mock_redis.get.return_value = b"Cached:Test"
-        result = service.resolve("Test")
+        result, is_hit = service.resolve("Test")
         assert result == "Cached:Test"
+        assert is_hit is True
 
     def test_missing_redis_client(self) -> None:
         """
@@ -119,8 +124,9 @@ class TestRedisOntologyResolver:
                 return "Value:" + term
 
         service = MyServiceNoRedis()
-        result = service.resolve("Test")
+        result, is_hit = service.resolve("Test")
         assert result == "Value:Test"
+        assert is_hit is False
 
     def test_redis_get_exception(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
@@ -130,9 +136,10 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = "Result"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result = resolver.resolve("Term")
+        result, is_hit = resolver.resolve("Term")
 
         assert result == "Result"
+        assert is_hit is False
         mock_codex_client.lookup_concept.assert_called_once_with("Term")
         # Should still try to set if get failed? Yes, unless logic prevents.
         # Implementation: try get -> catch -> call func -> try set.
@@ -147,9 +154,10 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = "Result"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result = resolver.resolve("Term")
+        result, is_hit = resolver.resolve("Term")
 
         assert result == "Result"
+        assert is_hit is False
 
     def test_codex_client_lookup(self) -> None:
         """
@@ -169,9 +177,10 @@ class TestRedisOntologyResolver:
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
         term = "Drug A + B (Old)"
 
-        result = resolver.resolve(term)
+        result, is_hit = resolver.resolve(term)
 
         assert result == "ID:123"
+        assert is_hit is False
         # The key should preserve the term exactly
         mock_redis.get.assert_called_once_with("resolve:Drug A + B (Old)")
         mock_redis.setex.assert_called_once_with("resolve:Drug A + B (Old)", 86400, "ID:123")
@@ -184,9 +193,10 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = None
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result = resolver.resolve("")
+        result, is_hit = resolver.resolve("")
 
         assert result is None
+        assert is_hit is False
         mock_redis.get.assert_called_once_with("resolve:")
 
     def test_codex_exception_propagation(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
@@ -212,11 +222,13 @@ class TestRedisOntologyResolver:
         mock_redis.get.return_value = "RxNorm:789"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result = resolver.resolve("DrugX")
+        result, is_hit = resolver.resolve("DrugX")
 
         assert result == "RxNorm:789"
+        assert is_hit is True  # If redis returns value, it's a hit
 
         # Scenario 2: Redis returns an integer (unlikely but robust code should handle it)
         mock_redis.get.return_value = 12345
-        result = resolver.resolve("DrugY")
+        result, is_hit = resolver.resolve("DrugY")
         assert result == "12345"
+        assert is_hit is True

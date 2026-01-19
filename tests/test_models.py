@@ -236,6 +236,7 @@ def test_graph_job_metrics_default() -> None:
         "nodes_created": 0,
         "edges_created": 0,
         "ontology_misses": 0,
+        "ontology_cache_hits": 0,
     }
 
 
@@ -247,7 +248,7 @@ def test_graph_job_metrics_validation_missing_key() -> None:
             status="COMPLETE",
             metrics={"nodes_created": 10},  # Missing other keys
         )
-    assert "Missing required metrics keys: edges_created, ontology_misses" in str(excinfo.value)
+    assert "Missing required metrics keys: edges_created, ontology_cache_hits, ontology_misses" in str(excinfo.value)
 
 
 def test_graph_job_metrics_validation_custom_valid() -> None:
@@ -259,6 +260,7 @@ def test_graph_job_metrics_validation_custom_valid() -> None:
             "nodes_created": 10,
             "edges_created": 20,
             "ontology_misses": 5,
+            "ontology_cache_hits": 2,
             "extra_metric": 100,  # Extra keys allowed by Pydantic usually, unless extra="forbid"
         },
     )
@@ -288,7 +290,12 @@ def test_graph_job_metrics_negative_values() -> None:
             id=uuid.uuid4(),
             manifest_path="/path/to/manifest.yaml",
             status="COMPLETE",
-            metrics={"nodes_created": -1, "edges_created": 0, "ontology_misses": 0},
+            metrics={
+                "nodes_created": -1,
+                "edges_created": 0,
+                "ontology_misses": 0,
+                "ontology_cache_hits": 0,
+            },
         )
     assert "Metric 'nodes_created' cannot be negative" in str(excinfo.value)
 

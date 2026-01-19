@@ -52,9 +52,14 @@ class MockOntologyResolver(OntologyResolver):
 
     def __init__(self, mappings: dict[str, str] | None = None):
         self.mappings = mappings or {}
+        self.cache_hits: set[str] = set()
 
-    def resolve(self, term: str) -> str | None:
-        return self.mappings.get(term)
+    def set_cache_hit(self, term: str) -> None:
+        self.cache_hits.add(term)
+
+    def resolve(self, term: str) -> tuple[str | None, bool]:
+        is_hit = term in self.cache_hits
+        return self.mappings.get(term), is_hit
 
 
 # --- Fixtures ---
@@ -715,3 +720,54 @@ def test_ingest_entities_mixed_scenario(
     assert len(batch_data) == 2
     assert batch_data[0]["id"] == "Resolved1"
     assert batch_data[1]["id"] == "Miss1"
+
+
+def test_ingest_entities_cache_hit(
+    mock_neo4j_client: MagicMock,
+    drug_only_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test that ontology_cache_hits metric increments on cache hit."""
+    data = {
+        "drugs": [
+            {"drug_id": "Hit1", "name": "H1"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    resolver = MockOntologyResolver({"Hit1": "ResolvedHit1"})
+    resolver.set_cache_hit("Hit1")
+
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+    engine.ingest_entities(drug_only_manifest, adapter, graph_job)
+
+    assert graph_job.metrics["nodes_created"] == 1.0
+    assert graph_job.metrics["ontology_cache_hits"] == 1.0
+    assert graph_job.metrics["ontology_misses"] == 0.0
+
+
+def test_ingest_relationships_cache_hit(
+    mock_neo4j_client: MagicMock,
+    sample_manifest: ProjectionManifest,
+    graph_job: GraphJob,
+) -> None:
+    """Test that ontology_cache_hits metric increments on cache hits for relationships."""
+    data = {
+        "treatments": [
+            {"drug_ref": "StartHit", "disease_ref": "EndHit"},
+        ]
+    }
+    adapter = MockSourceAdapter(data)
+    adapter.connect()
+
+    resolver = MockOntologyResolver({"StartHit": "S1", "EndHit": "E1"})
+    resolver.set_cache_hit("StartHit")
+    resolver.set_cache_hit("EndHit")
+
+    engine = ProjectionEngine(mock_neo4j_client, resolver)
+    engine.ingest_relationships(sample_manifest, adapter, graph_job)
+
+    assert graph_job.metrics["edges_created"] == 1.0
+    assert graph_job.metrics["ontology_cache_hits"] == 2.0
+    assert graph_job.metrics["ontology_misses"] == 0.0
