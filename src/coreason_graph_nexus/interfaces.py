@@ -57,3 +57,25 @@ class SourceAdapter(ABC):
         exc_tb: TracebackType | None,
     ) -> None:
         self.disconnect()
+
+
+class OntologyResolver(ABC):
+    """
+    Abstract Interface for Ontology Resolution.
+
+    The resolver is responsible for mapping source terms (e.g., "Tylenol")
+    to canonical concepts (e.g., "RxNorm:123") in the Knowledge Graph.
+    """
+
+    @abstractmethod
+    def resolve(self, term: str) -> tuple[str | None, bool]:
+        """
+        Resolves a source term to a canonical identifier.
+
+        Args:
+            term: The source string to resolve.
+
+        Returns:
+            A tuple of (canonical identifier (str) | None, is_cache_hit (bool)).
+        """
+        ...

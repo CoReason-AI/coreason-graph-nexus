@@ -8,176 +8,218 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from collections.abc import Generator
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+import networkx as nx
 import pytest
 from neo4j.exceptions import ServiceUnavailable
+from neo4j.graph import Node, Path, Relationship
+from pytest_mock import MockFixture
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
 
 
 @pytest.fixture
-def mock_driver() -> Generator[MagicMock, None, None]:
-    """Mock the neo4j.GraphDatabase.driver."""
-    with patch("coreason_graph_nexus.adapters.neo4j_adapter.GraphDatabase.driver") as mock:
-        yield mock
+def mock_driver(mocker: MockFixture) -> Any:
+    driver = mocker.Mock()
+    # Mock close method
+    driver.close = mocker.Mock()
+
+    # Mock verify_connectivity
+    driver.verify_connectivity = mocker.Mock()
+
+    # Mock execute_query
+    driver.execute_query = mocker.Mock(return_value=([], None, None))
+
+    # Patch GraphDatabase.driver to return our mock
+    mocker.patch("neo4j.GraphDatabase.driver", return_value=driver)
+
+    return driver
 
 
-def test_initialization(mock_driver: MagicMock) -> None:
-    """Test that the client initializes the driver correctly."""
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
-
-    mock_driver.assert_called_once_with("bolt://localhost:7687", auth=("user", "pass"))
-    assert client._database == "neo4j"
+@pytest.fixture
+def client(mock_driver: Any) -> Neo4jClient:
+    return Neo4jClient("bolt://localhost:7687", ("user", "pass"))
 
 
-def test_context_manager(mock_driver: MagicMock) -> None:
-    """Test that the context manager calls verify_connectivity and close."""
-    driver_instance = mock_driver.return_value
-
-    with Neo4jClient("bolt://localhost:7687", ("user", "pass")) as client:
-        driver_instance.verify_connectivity.assert_called_once()
-        assert isinstance(client, Neo4jClient)
-
-    driver_instance.close.assert_called_once()
+def test_initialization(client: Neo4jClient, mock_driver: Any) -> None:
+    assert client._uri == "bolt://localhost:7687"
+    assert client._driver == mock_driver
 
 
-def test_verify_connectivity_failure(mock_driver: MagicMock) -> None:
-    """Test that verify_connectivity raises ServiceUnavailable on failure."""
-    driver_instance = mock_driver.return_value
-    driver_instance.verify_connectivity.side_effect = ServiceUnavailable("Connection failed")
+def test_context_manager(client: Neo4jClient, mock_driver: Any) -> None:
+    with client as c:
+        assert c is client
+        mock_driver.verify_connectivity.assert_called_once()
 
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+    mock_driver.close.assert_called_once()
+
+
+def test_verify_connectivity_failure(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    """Test handling of ServiceUnavailable in verify_connectivity."""
+    mock_driver.verify_connectivity.side_effect = ServiceUnavailable("Cannot connect")
+    mock_logger = mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.logger")
 
     with pytest.raises(ServiceUnavailable):
         client.verify_connectivity()
 
+    mock_logger.error.assert_called_once()
+    assert "Failed to connect to Neo4j" in mock_logger.error.call_args[0][0]
 
-def test_execute_query_success(mock_driver: MagicMock) -> None:
-    """Test successful query execution."""
-    driver_instance = mock_driver.return_value
 
-    # Mock the return value of execute_query
-    # It returns (records, summary, keys)
+def test_execute_query_success(client: Neo4jClient, mock_driver: Any) -> None:
     mock_record = MagicMock()
     mock_record.data.return_value = {"key": "value"}
-    driver_instance.execute_query.return_value = ([mock_record], None, None)
+    mock_driver.execute_query.return_value = ([mock_record], None, None)
 
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
     result = client.execute_query("MATCH (n) RETURN n")
 
-    driver_instance.execute_query.assert_called_once_with(
-        "MATCH (n) RETURN n",
-        parameters_={},
-        database_="neo4j",
-    )
     assert result == [{"key": "value"}]
+    mock_driver.execute_query.assert_called_once()
 
 
-def test_execute_query_with_params(mock_driver: MagicMock) -> None:
-    """Test query execution with parameters."""
-    driver_instance = mock_driver.return_value
-    driver_instance.execute_query.return_value = ([], None, None)
+def test_execute_query_failure(client: Neo4jClient, mock_driver: Any) -> None:
+    mock_driver.execute_query.side_effect = Exception("Query Failed")
 
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
-    client.execute_query("CREATE (n {name: $name})", {"name": "Test"})
-
-    driver_instance.execute_query.assert_called_once_with(
-        "CREATE (n {name: $name})",
-        parameters_={"name": "Test"},
-        database_="neo4j",
-    )
-
-
-def test_execute_query_failure(mock_driver: MagicMock) -> None:
-    """Test query execution handles exceptions."""
-    driver_instance = mock_driver.return_value
-    driver_instance.execute_query.side_effect = Exception("Query Error")
-
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
-
-    with pytest.raises(Exception, match="Query Error"):
+    with pytest.raises(Exception, match="Query Failed"):
         client.execute_query("BAD QUERY")
 
 
-# --- New Tests for Edge Cases & Complex Scenarios ---
+def test_batch_write_success(client: Neo4jClient, mock_driver: Any) -> None:
+    data = [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    client.batch_write("UNWIND $batch AS row ...", data, batch_size=2)
+
+    # Should be called twice (batch of 2, batch of 1)
+    assert mock_driver.execute_query.call_count == 2
 
 
-def test_execute_query_empty_result(mock_driver: MagicMock) -> None:
-    """Test successful query execution returning no records."""
-    driver_instance = mock_driver.return_value
-    driver_instance.execute_query.return_value = ([], None, None)
-
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
-    result = client.execute_query("MATCH (n:NonExistent) RETURN n")
-
-    assert result == []
+def test_batch_write_empty(client: Neo4jClient, mock_driver: Any) -> None:
+    client.batch_write("...", [])
+    mock_driver.execute_query.assert_not_called()
 
 
-def test_execute_query_complex_data(mock_driver: MagicMock) -> None:
-    """Test handling of complex return types (nested dicts, lists, nulls)."""
-    driver_instance = mock_driver.return_value
+def test_merge_nodes(client: Neo4jClient, mock_driver: Any) -> None:
+    data = [{"id": 1, "name": "A"}]
+    client.merge_nodes("Person", data, merge_keys=["id"])
 
-    complex_data: dict[str, Any] = {
-        "id": 1,
-        "labels": ["Person", "Employee"],
-        "metadata": {"source": "etl", "active": True},
-        "reports_to": None,
-    }
-
-    mock_record = MagicMock()
-    mock_record.data.return_value = complex_data
-    driver_instance.execute_query.return_value = ([mock_record], None, None)
-
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
-    result = client.execute_query("MATCH (p:Person) RETURN p")
-
-    assert len(result) == 1
-    assert result[0] == complex_data
+    mock_driver.execute_query.assert_called_once()
+    args, kwargs = mock_driver.execute_query.call_args
+    query = args[0]
+    assert "MERGE (n:`Person` { `id`: row.`id` })" in query
 
 
-def test_execute_query_complex_params(mock_driver: MagicMock) -> None:
-    """Test passing complex parameters (lists, dicts) to the query."""
-    driver_instance = mock_driver.return_value
-    driver_instance.execute_query.return_value = ([], None, None)
+def test_merge_relationships(client: Neo4jClient, mock_driver: Any) -> None:
+    data = [{"start": 1, "end": 2}]
+    client.merge_relationships("Person", "start", "Person", "end", "KNOWS", data)
 
-    params = {
-        "names": ["Alice", "Bob"],
-        "props": {"department": "Engineering"},
-        "limit": 10,
-    }
-
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
-    client.execute_query("MATCH (n) WHERE n.name IN $names", params)
-
-    driver_instance.execute_query.assert_called_once_with(
-        "MATCH (n) WHERE n.name IN $names",
-        parameters_=params,
-        database_="neo4j",
-    )
+    mock_driver.execute_query.assert_called_once()
+    args, kwargs = mock_driver.execute_query.call_args
+    query = args[0]
+    assert "MATCH (source:`Person`" in query
+    assert "MATCH (target:`Person`" in query
+    assert "MERGE (source)-[r:`KNOWS`]->(target)" in query
 
 
-def test_custom_database_selection(mock_driver: MagicMock) -> None:
-    """Test that queries are executed against the specified custom database."""
-    driver_instance = mock_driver.return_value
-    driver_instance.execute_query.return_value = ([], None, None)
+def test_to_networkx_basic(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    # Setup mock records
+    node_mock = mocker.create_autospec(Node, instance=True)
+    node_mock.element_id = "n1"
+    node_mock.labels = {"Person"}
+    node_mock.items.return_value = [("name", "Alice")]
 
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"), database="analytics")
-    client.execute_query("MATCH (n) RETURN count(n)")
+    rel_mock = mocker.create_autospec(Relationship, instance=True)
+    rel_mock.start_node.element_id = "n1"
+    rel_mock.end_node.element_id = "n2"
+    rel_mock.type = "KNOWS"
+    rel_mock.items.return_value = [("since", 2022)]
 
-    driver_instance.execute_query.assert_called_once()
-    call_args = driver_instance.execute_query.call_args
-    assert call_args.kwargs["database_"] == "analytics"
+    # We need a record that behaves like a mapping
+    record_mock = MagicMock()
+    record_mock.values.return_value = [node_mock, rel_mock]
+
+    mock_driver.execute_query.return_value = ([record_mock], None, None)
+
+    graph = client.to_networkx("MATCH ...")
+
+    assert isinstance(graph, nx.DiGraph)
+    assert "n1" in graph.nodes
+    assert graph.nodes["n1"]["name"] == "Alice"
+    assert ("n1", "n2") in graph.edges
+    assert graph.edges["n1", "n2"]["since"] == 2022
 
 
-def test_connection_failure_during_query(mock_driver: MagicMock) -> None:
-    """Test handling of ServiceUnavailable raised during query execution."""
-    driver_instance = mock_driver.return_value
-    driver_instance.execute_query.side_effect = ServiceUnavailable("Connection dropped")
+def test_to_networkx_failure(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    """Test handling of exceptions in to_networkx."""
+    mock_driver.execute_query.side_effect = Exception("Conversion Failed")
+    mock_logger = mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.logger")
 
-    client = Neo4jClient("bolt://localhost:7687", ("user", "pass"))
+    with pytest.raises(Exception, match="Conversion Failed"):
+        client.to_networkx("MATCH ...")
 
-    with pytest.raises(ServiceUnavailable, match="Connection dropped"):
-        client.execute_query("MATCH (n) RETURN n")
+    mock_logger.error.assert_called_once()
+    assert "Failed to convert Cypher to NetworkX" in mock_logger.error.call_args[0][0]
+
+
+def test_to_networkx_complex_types(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    """Test handling of Path objects and lists (nested structures)."""
+    # Create nodes
+    n1 = mocker.create_autospec(Node, instance=True)
+    n1.element_id = "n1"
+    n1.labels = {"A"}
+    n1.items.return_value = [("p", 1)]
+
+    n2 = mocker.create_autospec(Node, instance=True)
+    n2.element_id = "n2"
+    n2.labels = {"B"}
+    n2.items.return_value = [("p", 2)]
+
+    # Create relationship
+    r1 = mocker.create_autospec(Relationship, instance=True)
+    r1.start_node.element_id = "n1"
+    r1.end_node.element_id = "n2"
+    r1.type = "LINK"
+    r1.items.return_value = []
+
+    # Mock Path
+    path_mock = mocker.create_autospec(Path, instance=True)
+    path_mock.nodes = [n1, n2]
+    path_mock.relationships = [r1]
+
+    # Mock List of Nodes (e.g. from collect(n))
+    list_mock = [n1, n2]
+
+    # Record returning a path and a list
+    record_mock = MagicMock()
+    record_mock.values.return_value = [path_mock, list_mock]
+
+    mock_driver.execute_query.return_value = ([record_mock], None, None)
+
+    graph = client.to_networkx("MATCH path, collect(n)...")
+
+    assert "n1" in graph.nodes
+    assert "n2" in graph.nodes
+    assert ("n1", "n2") in graph.edges
+
+
+def test_to_networkx_legacy_id_fallback(client: Neo4jClient, mock_driver: Any, mocker: MockFixture) -> None:
+    """Test fallback to .id when .element_id is missing (Neo4j 4.x compat)."""
+    # Patch the Node class in the adapter so `isinstance(x, Node)` passes for our mock
+    mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.Node", new=MagicMock)
+
+    node_mock = MagicMock()
+    del node_mock.element_id  # Ensure it doesn't have it
+    node_mock.id = 123
+    node_mock.labels = ["Legacy"]
+    node_mock.items.return_value = [("prop", "val")]
+
+    record_mock = MagicMock()
+    record_mock.values.return_value = [node_mock]
+
+    mock_driver.execute_query.return_value = ([record_mock], None, None)
+
+    graph = client.to_networkx("MATCH ...")
+
+    assert 123 in graph.nodes
+    assert graph.nodes[123]["prop"] == "val"

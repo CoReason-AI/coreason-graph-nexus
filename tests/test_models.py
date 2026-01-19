@@ -19,6 +19,8 @@ from pydantic import ValidationError
 from coreason_graph_nexus.models import (
     Entity,
     GraphJob,
+    LinkPredictionMethod,
+    LinkPredictionRequest,
     ProjectionManifest,
     PropertyMapping,
     Relationship,
@@ -234,6 +236,7 @@ def test_graph_job_metrics_default() -> None:
         "nodes_created": 0,
         "edges_created": 0,
         "ontology_misses": 0,
+        "ontology_cache_hits": 0,
     }
 
 
@@ -245,7 +248,7 @@ def test_graph_job_metrics_validation_missing_key() -> None:
             status="COMPLETE",
             metrics={"nodes_created": 10},  # Missing other keys
         )
-    assert "Missing required metrics keys: edges_created, ontology_misses" in str(excinfo.value)
+    assert "Missing required metrics keys: edges_created, ontology_cache_hits, ontology_misses" in str(excinfo.value)
 
 
 def test_graph_job_metrics_validation_custom_valid() -> None:
@@ -257,6 +260,7 @@ def test_graph_job_metrics_validation_custom_valid() -> None:
             "nodes_created": 10,
             "edges_created": 20,
             "ontology_misses": 5,
+            "ontology_cache_hits": 2,
             "extra_metric": 100,  # Extra keys allowed by Pydantic usually, unless extra="forbid"
         },
     )
@@ -286,7 +290,12 @@ def test_graph_job_metrics_negative_values() -> None:
             id=uuid.uuid4(),
             manifest_path="/path/to/manifest.yaml",
             status="COMPLETE",
-            metrics={"nodes_created": -1, "edges_created": 0, "ontology_misses": 0},
+            metrics={
+                "nodes_created": -1,
+                "edges_created": 0,
+                "ontology_misses": 0,
+                "ontology_cache_hits": 0,
+            },
         )
     assert "Metric 'nodes_created' cannot be negative" in str(excinfo.value)
 
@@ -332,3 +341,44 @@ def test_graph_job_metrics_invalid_types() -> None:
                 "ontology_misses": 0,
             },
         )
+
+
+def test_link_prediction_request_heuristic_valid() -> None:
+    req = LinkPredictionRequest(
+        method=LinkPredictionMethod.HEURISTIC,
+        heuristic_query="MATCH (n) RETURN n",
+    )
+    assert req.method == LinkPredictionMethod.HEURISTIC
+    assert req.heuristic_query == "MATCH (n) RETURN n"
+
+
+def test_link_prediction_request_heuristic_missing_query() -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        LinkPredictionRequest(
+            method=LinkPredictionMethod.HEURISTIC,
+            heuristic_query=None,
+        )
+    assert "heuristic_query is required" in str(excinfo.value)
+
+
+def test_link_prediction_request_semantic_valid() -> None:
+    req = LinkPredictionRequest(
+        method=LinkPredictionMethod.SEMANTIC,
+        source_label="Author",
+        target_label="Paper",
+    )
+    assert req.method == LinkPredictionMethod.SEMANTIC
+    assert req.source_label == "Author"
+    assert req.target_label == "Paper"
+    assert req.threshold == 0.75  # default
+    assert req.relationship_type == "SEMANTIC_LINK"  # default
+
+
+def test_link_prediction_request_semantic_missing_labels() -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        LinkPredictionRequest(
+            method=LinkPredictionMethod.SEMANTIC,
+            source_label="Author",
+            # target_label missing
+        )
+    assert "source_label and target_label are required" in str(excinfo.value)

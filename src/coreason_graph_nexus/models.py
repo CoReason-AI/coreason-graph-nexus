@@ -8,6 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from enum import Enum
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -178,6 +179,7 @@ class GraphJob(BaseModel):
             "nodes_created": 0.0,
             "edges_created": 0.0,
             "ontology_misses": 0.0,
+            "ontology_cache_hits": 0.0,
         },
         description="Performance metrics collected during execution.",
     )
@@ -187,7 +189,7 @@ class GraphJob(BaseModel):
         """
         Validates that the metrics dictionary contains all required keys.
         """
-        required_keys = {"nodes_created", "edges_created", "ontology_misses"}
+        required_keys = {"nodes_created", "edges_created", "ontology_misses", "ontology_cache_hits"}
         missing_keys = required_keys - self.metrics.keys()
         if missing_keys:
             raise ValueError(f"Missing required metrics keys: {', '.join(sorted(missing_keys))}")
@@ -201,4 +203,97 @@ class GraphJob(BaseModel):
         for key, value in self.metrics.items():
             if value < 0:
                 raise ValueError(f"Metric '{key}' cannot be negative (got {value})")
+        return self
+
+
+class AnalysisAlgo(str, Enum):
+    """
+    Enumeration of supported graph analysis algorithms.
+    """
+
+    PAGERANK = "pagerank"
+    SHORTEST_PATH = "shortest_path"
+    LOUVAIN = "louvain"
+
+
+class GraphAnalysisRequest(BaseModel):
+    """
+    Request object for running graph analysis algorithms.
+
+    Attributes:
+        center_node_id: The ID of the center node for subgraph projection.
+        target_node_id: The ID of the target node (required for shortest path).
+        algorithm: The algorithm to run.
+        depth: The depth of the subgraph projection (K-Hops).
+        write_property: The property key to write results back to (for PageRank/Louvain).
+    """
+
+    center_node_id: str = Field(description="The ID of the center node for subgraph projection.")
+    target_node_id: str | None = Field(
+        default=None, description="The ID of the target node (required for shortest path)."
+    )
+    algorithm: AnalysisAlgo = Field(description="The algorithm to run.")
+    depth: int = Field(default=2, ge=1, description="The depth of the subgraph projection (K-Hops).")
+    write_property: str = Field(
+        default="pagerank_score",
+        description="The property key to write results back to (for PageRank/Louvain).",
+    )
+
+
+class LinkPredictionMethod(str, Enum):
+    """
+    Enumeration of supported link prediction methods.
+    """
+
+    HEURISTIC = "heuristic"
+    SEMANTIC = "semantic"
+
+
+class LinkPredictionRequest(BaseModel):
+    """
+    Request object for running link prediction.
+
+    Attributes:
+        method: The method to use for prediction (HEURISTIC or SEMANTIC).
+        heuristic_query: The Cypher query to execute for rule-based prediction.
+                         Required if method is HEURISTIC.
+    """
+
+    method: LinkPredictionMethod = Field(description="The method to use for prediction (HEURISTIC or SEMANTIC).")
+    heuristic_query: str | None = Field(
+        default=None,
+        description="The Cypher query to execute for rule-based prediction. Required if method is HEURISTIC.",
+    )
+    threshold: float = Field(
+        default=0.75, ge=0.0, le=1.0, description="Minimum cosine similarity threshold (for SEMANTIC)."
+    )
+    embedding_property: str = Field(
+        default="embedding", description="Property key for vector embedding (for SEMANTIC)."
+    )
+    relationship_type: str = Field(
+        default="SEMANTIC_LINK", description="Type of relationship to create (for SEMANTIC)."
+    )
+    source_label: str | None = Field(default=None, description="Label for source nodes (Required for SEMANTIC).")
+    target_label: str | None = Field(default=None, description="Label for target nodes (Required for SEMANTIC).")
+
+    @model_validator(mode="after")
+    def validate_heuristic_query(self) -> "LinkPredictionRequest":
+        """
+        Validates that heuristic_query is present and non-empty if method is HEURISTIC.
+        """
+        if self.method == LinkPredictionMethod.HEURISTIC:
+            if not self.heuristic_query or not self.heuristic_query.strip():
+                raise ValueError(
+                    "heuristic_query is required and cannot be empty/whitespace for HEURISTIC prediction method."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_semantic_params(self) -> "LinkPredictionRequest":
+        """
+        Validates that source_label and target_label are present if method is SEMANTIC.
+        """
+        if self.method == LinkPredictionMethod.SEMANTIC:
+            if not self.source_label or not self.target_label:
+                raise ValueError("source_label and target_label are required for SEMANTIC prediction.")
         return self
