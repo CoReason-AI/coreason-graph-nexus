@@ -58,6 +58,9 @@ class ProjectionEngine:
             adapter: The source data adapter.
             job: The job tracking object (metrics are updated in-place).
             batch_size: Number of records per transaction.
+
+        Raises:
+            Exception: If ingestion fails during batch processing.
         """
         logger.info(f"Starting entity ingestion for Job {job.id}")
         job.status = "PROJECTING"
@@ -100,6 +103,9 @@ class ProjectionEngine:
             adapter: The source data adapter.
             job: The job tracking object (metrics are updated in-place).
             batch_size: Number of records per transaction.
+
+        Raises:
+            Exception: If ingestion fails during batch processing.
         """
         logger.info(f"Starting relationship ingestion for Job {job.id}")
         if job.status != "PROJECTING":
@@ -131,8 +137,14 @@ class ProjectionEngine:
     def _process_entity_row(self, row: dict[str, Any], entity: Entity, job: GraphJob) -> dict[str, Any] | None:
         """
         Processes a single row for entity ingestion.
-        Returns the processed dict or None if row should be skipped.
-        Updates job metrics (side-effect) for ontology misses.
+
+        Args:
+            row: The raw data row.
+            entity: The entity configuration.
+            job: The graph job object.
+
+        Returns:
+            The processed dict or None if row should be skipped.
         """
         source_id = row.get(entity.id_column)
         if source_id is None or source_id == "":
@@ -163,8 +175,14 @@ class ProjectionEngine:
     def _process_relationship_row(self, row: dict[str, Any], rel: Relationship, job: GraphJob) -> dict[str, Any] | None:
         """
         Processes a single row for relationship ingestion.
-        Returns the processed dict or None if row should be skipped.
-        Updates job metrics (side-effect) for ontology misses.
+
+        Args:
+            row: The raw data row.
+            rel: The relationship configuration.
+            job: The graph job object.
+
+        Returns:
+            The processed dict or None if row should be skipped.
         """
         source_start = row.get(rel.start_key)
         source_end = row.get(rel.end_key)

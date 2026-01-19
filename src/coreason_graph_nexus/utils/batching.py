@@ -36,6 +36,9 @@ def process_and_batch(
 
     Returns:
         The total number of processed items consumed.
+
+    Raises:
+        Exception: If the consumer raises an exception during batch processing.
     """
     processed_count = 0
 

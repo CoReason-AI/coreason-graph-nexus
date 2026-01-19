@@ -34,6 +34,9 @@ def cached_resolver(
 
     Args:
         ttl: Time to live in seconds (default: 24h).
+
+    Returns:
+        A decorator function that wraps the resolution method.
     """
 
     def decorator(
@@ -119,5 +122,11 @@ class RedisOntologyResolver(OntologyResolver):
         Resolves a term to a canonical ID.
 
         Checks Redis first (via decorator). If miss, calls Codex.
+
+        Args:
+            term: The source string to resolve.
+
+        Returns:
+            A tuple of (canonical identifier (str) | None, is_cache_hit (bool)).
         """
         return self.codex_client.lookup_concept(term)  # type: ignore[return-value]

@@ -8,6 +8,8 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from typing import Any
+
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -40,6 +42,10 @@ class LinkPredictor:
 
         Args:
             request: The link prediction request containing method and parameters.
+
+        Raises:
+            ValueError: If required parameters for specific methods are missing.
+            NotImplementedError: If the requested method is not implemented.
         """
         logger.info(f"Starting link prediction using method: {request.method.value}")
 
@@ -79,6 +85,9 @@ class LinkPredictor:
 
         Args:
             request: The link prediction request.
+
+        Raises:
+            ValueError: If source_label or target_label is missing.
         """
         if not request.source_label or not request.target_label:
             # Should be caught by validation
@@ -160,7 +169,7 @@ class LinkPredictor:
         self.client.batch_write(query, relationships_to_create, batch_size=5000)
         logger.info("Semantic link prediction complete.")
 
-    def _fetch_embeddings(self, label: str, property_key: str) -> list[dict[str, str | list[float]]]:
+    def _fetch_embeddings(self, label: str, property_key: str) -> list[dict[str, Any]]:
         """
         Fetches node IDs and their embeddings from Neo4j.
 
