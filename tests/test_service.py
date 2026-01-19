@@ -8,7 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -124,16 +124,16 @@ async def test_service_async_delegation(
 
     # Test Ingest Entities
     await svc.ingest_entities(manifest, adapter, job)
-    svc.projector.ingest_entities.assert_called_once_with(manifest, adapter, job, 10000)
+    cast(AsyncMock, svc.projector.ingest_entities).assert_called_once_with(manifest, adapter, job, 10000)
 
     # Test Ingest Relationships
     await svc.ingest_relationships(manifest, adapter, job)
-    svc.projector.ingest_relationships.assert_called_once_with(manifest, adapter, job, 10000)
+    cast(AsyncMock, svc.projector.ingest_relationships).assert_called_once_with(manifest, adapter, job, 10000)
 
     # Test Predict Links
     req = MagicMock(spec=LinkPredictionRequest)
     await svc.predict_links(req)
-    svc.predictor.predict_links.assert_called_once_with(req)
+    cast(AsyncMock, svc.predictor.predict_links).assert_called_once_with(req)
 
 
 def test_service_sync_facade(mocker: Any, mock_resolver: MockOntologyResolver, mock_client_async: MagicMock) -> None:

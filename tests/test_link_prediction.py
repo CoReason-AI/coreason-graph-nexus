@@ -9,16 +9,17 @@
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
 from typing import Any
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
 
+from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClientAsync
 from coreason_graph_nexus.link_prediction import LinkPredictor, LinkPredictorAsync
 from coreason_graph_nexus.models import LinkPredictionMethod, LinkPredictionRequest
-from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClientAsync
 
 # ... Sync Tests (Existing) ...
+
 
 def test_link_prediction_request_validation() -> None:
     request = LinkPredictionRequest(
@@ -34,10 +35,12 @@ def test_link_prediction_request_validation() -> None:
     request_sem = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="A", target_label="B")
     assert request_sem.method == LinkPredictionMethod.SEMANTIC
 
+
 def test_link_prediction_request_whitespace_validation() -> None:
     with pytest.raises(ValidationError) as exc:
         LinkPredictionRequest(method=LinkPredictionMethod.HEURISTIC, heuristic_query="   ")
     assert "cannot be empty/whitespace" in str(exc.value)
+
 
 def test_heuristic_prediction_execution(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -46,6 +49,7 @@ def test_heuristic_prediction_execution(mocker: Any) -> None:
     request = LinkPredictionRequest(method=LinkPredictionMethod.HEURISTIC, heuristic_query=query)
     predictor.predict_links(request)
     mock_client.execute_query.assert_called_once_with(query)
+
 
 def test_complex_heuristic_query_execution(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -60,6 +64,7 @@ def test_complex_heuristic_query_execution(mocker: Any) -> None:
     predictor.predict_links(request)
     mock_client.execute_query.assert_called_once_with(query)
 
+
 def test_semantic_prediction_with_unused_query(mocker: Any) -> None:
     mock_client = mocker.Mock()
     mock_client.execute_query.return_value = []
@@ -70,10 +75,12 @@ def test_semantic_prediction_with_unused_query(mocker: Any) -> None:
     predictor.predict_links(request)
     assert mock_client.execute_query.call_count == 1
 
+
 def test_semantic_prediction_validation_failure() -> None:
     with pytest.raises(ValidationError) as exc:
         LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC)
     assert "source_label and target_label are required" in str(exc.value)
+
 
 def test_heuristic_execution_failure(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -83,6 +90,7 @@ def test_heuristic_execution_failure(mocker: Any) -> None:
     with pytest.raises(Exception) as exc:
         predictor.predict_links(request)
     assert "Neo4j Error" in str(exc.value)
+
 
 def test_unknown_method_raises_error(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -96,6 +104,7 @@ def test_unknown_method_raises_error(mocker: Any) -> None:
         predictor.predict_links(request)
     assert "Method" in str(exc.value)
 
+
 def test_heuristic_query_missing_defensive_check(mocker: Any) -> None:
     mock_client = mocker.Mock()
     predictor = LinkPredictor(client=mock_client)
@@ -105,6 +114,7 @@ def test_heuristic_query_missing_defensive_check(mocker: Any) -> None:
     with pytest.raises(ValueError) as exc:
         predictor.predict_links(request)
     assert "Heuristic query is missing" in str(exc.value)
+
 
 def test_semantic_prediction_success(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -125,6 +135,7 @@ def test_semantic_prediction_success(mocker: Any) -> None:
     data = call_args[0][1]
     assert len(data) == 2
 
+
 def test_semantic_prediction_no_embeddings(mocker: Any) -> None:
     mock_client = mocker.Mock()
     mock_client.execute_query.return_value = []
@@ -132,6 +143,7 @@ def test_semantic_prediction_no_embeddings(mocker: Any) -> None:
     request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="Source", target_label="Target")
     predictor.predict_links(request)
     mock_client.batch_write.assert_not_called()
+
 
 def test_semantic_prediction_self_loop_exclusion(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -141,6 +153,7 @@ def test_semantic_prediction_self_loop_exclusion(mocker: Any) -> None:
     request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="Node", target_label="Node")
     predictor.predict_links(request)
     mock_client.batch_write.assert_not_called()
+
 
 def test_semantic_prediction_no_matches(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -155,6 +168,7 @@ def test_semantic_prediction_no_matches(mocker: Any) -> None:
     assert mock_client.execute_query.call_count == 2
     mock_client.batch_write.assert_not_called()
 
+
 def test_semantic_prediction_target_empty(mocker: Any) -> None:
     mock_client = mocker.Mock()
     source_embeddings = [{"id": "s1", "embedding": [1.0, 0.0]}]
@@ -165,6 +179,7 @@ def test_semantic_prediction_target_empty(mocker: Any) -> None:
     predictor.predict_links(request)
     assert mock_client.execute_query.call_count == 2
     mock_client.batch_write.assert_not_called()
+
 
 def test_semantic_prediction_missing_labels_defensive(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -177,6 +192,7 @@ def test_semantic_prediction_missing_labels_defensive(mocker: Any) -> None:
         predictor.predict_links(request)
     assert "source_label and target_label are required" in str(exc.value)
 
+
 def test_semantic_prediction_zero_vector(mocker: Any) -> None:
     mock_client = mocker.Mock()
     source_embeddings = [{"id": "s1", "embedding": [0.0, 0.0]}]
@@ -186,6 +202,7 @@ def test_semantic_prediction_zero_vector(mocker: Any) -> None:
     request = LinkPredictionRequest(method=LinkPredictionMethod.SEMANTIC, source_label="S", target_label="T")
     predictor.predict_links(request)
     mock_client.batch_write.assert_not_called()
+
 
 def test_semantic_prediction_dimension_mismatch(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -198,6 +215,7 @@ def test_semantic_prediction_dimension_mismatch(mocker: Any) -> None:
         predictor.predict_links(request)
     assert "Incompatible dimension" in str(exc.value) or "shapes" in str(exc.value)
 
+
 def test_semantic_prediction_threshold_boundary(mocker: Any) -> None:
     mock_client = mocker.Mock()
     source_embeddings = [{"id": "s1", "embedding": [1.0, 0.0]}]
@@ -209,6 +227,7 @@ def test_semantic_prediction_threshold_boundary(mocker: Any) -> None:
     )
     predictor.predict_links(request)
     mock_client.batch_write.assert_called_once()
+
 
 def test_semantic_prediction_invalid_embedding_format(mocker: Any) -> None:
     mock_client = mocker.Mock()
@@ -223,6 +242,7 @@ def test_semantic_prediction_invalid_embedding_format(mocker: Any) -> None:
 
 # ... Async Tests ...
 
+
 @pytest.mark.asyncio
 async def test_link_prediction_async_heuristic(mocker: Any) -> None:
     """Test async heuristic link prediction."""
@@ -231,12 +251,11 @@ async def test_link_prediction_async_heuristic(mocker: Any) -> None:
 
     predictor = LinkPredictorAsync(client=mock_client)
 
-    request = LinkPredictionRequest(
-        method=LinkPredictionMethod.HEURISTIC, heuristic_query="MATCH (n) RETURN n"
-    )
+    request = LinkPredictionRequest(method=LinkPredictionMethod.HEURISTIC, heuristic_query="MATCH (n) RETURN n")
 
     await predictor.predict_links(request)
     mock_client.execute_query.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_link_prediction_async_heuristic_failure(mocker: Any) -> None:
@@ -249,6 +268,7 @@ async def test_link_prediction_async_heuristic_failure(mocker: Any) -> None:
     # We want to verify logger call too if possible, but assert exception propagation
     with pytest.raises(Exception, match="Async Fail"):
         await predictor.predict_links(request)
+
 
 @pytest.mark.asyncio
 async def test_semantic_prediction_async(mocker: Any) -> None:
@@ -271,6 +291,7 @@ async def test_semantic_prediction_async(mocker: Any) -> None:
     assert mock_client.execute_query.call_count == 2
     mock_client.batch_write.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_semantic_prediction_async_no_embeddings(mocker: Any) -> None:
     mock_client = mocker.Mock(spec=Neo4jClientAsync)
@@ -281,6 +302,7 @@ async def test_semantic_prediction_async_no_embeddings(mocker: Any) -> None:
 
     await predictor.predict_links(request)
     mock_client.execute_query.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_semantic_prediction_async_no_target_embeddings(mocker: Any) -> None:
@@ -298,6 +320,7 @@ async def test_semantic_prediction_async_no_target_embeddings(mocker: Any) -> No
 
     assert mock_client.execute_query.call_count == 2
     mock_client.batch_write.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_semantic_prediction_async_no_matches(mocker: Any) -> None:
@@ -333,6 +356,7 @@ async def test_link_prediction_async_unknown_method(mocker: Any) -> None:
     with pytest.raises(NotImplementedError):
         await predictor.predict_links(request)
 
+
 @pytest.mark.asyncio
 async def test_link_prediction_async_missing_query(mocker: Any) -> None:
     mock_client = mocker.Mock(spec=Neo4jClientAsync)
@@ -344,6 +368,7 @@ async def test_link_prediction_async_missing_query(mocker: Any) -> None:
 
     with pytest.raises(ValueError):
         await predictor.predict_links(request)
+
 
 @pytest.mark.asyncio
 async def test_semantic_prediction_async_missing_labels(mocker: Any) -> None:
