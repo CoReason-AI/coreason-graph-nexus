@@ -17,7 +17,7 @@ from neo4j.exceptions import ServiceUnavailable
 from neo4j.graph import Node, Path, Relationship
 from pytest_mock import MockFixture
 
-from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
+from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient, Neo4jClientAsync
 
 
 @pytest.fixture
@@ -223,3 +223,147 @@ def test_to_networkx_legacy_id_fallback(client: Neo4jClient, mock_driver: Any, m
 
     assert 123 in graph.nodes
     assert graph.nodes[123]["prop"] == "val"
+
+
+# --- Async Tests ---
+
+
+@pytest.fixture
+def mock_async_driver(mocker: MockFixture) -> Any:
+    driver = mocker.AsyncMock()
+    driver.close = mocker.AsyncMock()
+    driver.verify_connectivity = mocker.AsyncMock()
+    driver.execute_query = mocker.AsyncMock(return_value=([], None, None))
+    mocker.patch("neo4j.AsyncGraphDatabase.driver", return_value=driver)
+    return driver
+
+
+@pytest.fixture
+async def client_async(mock_async_driver: Any) -> Neo4jClientAsync:
+    return Neo4jClientAsync("bolt://localhost:7687", ("user", "pass"))
+
+
+@pytest.mark.asyncio
+async def test_async_initialization(client_async: Neo4jClientAsync, mock_async_driver: Any) -> None:
+    assert client_async._uri == "bolt://localhost:7687"
+    assert client_async._driver == mock_async_driver
+
+
+@pytest.mark.asyncio
+async def test_async_context_manager(client_async: Neo4jClientAsync, mock_async_driver: Any) -> None:
+    async with client_async as c:
+        assert c is client_async
+        mock_async_driver.verify_connectivity.assert_called_once()
+    mock_async_driver.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_execute_query_success(client_async: Neo4jClientAsync, mock_async_driver: Any) -> None:
+    mock_record = MagicMock()
+    mock_record.data.return_value = {"key": "value"}
+    mock_async_driver.execute_query.return_value = ([mock_record], None, None)
+
+    result = await client_async.execute_query("MATCH (n) RETURN n")
+
+    assert result == [{"key": "value"}]
+    mock_async_driver.execute_query.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_batch_write_success(client_async: Neo4jClientAsync, mock_async_driver: Any) -> None:
+    data = [{"id": 1}, {"id": 2}, {"id": 3}]
+    await client_async.batch_write("UNWIND...", data, batch_size=2)
+    assert mock_async_driver.execute_query.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_async_batch_write_invalid_size(client_async: Neo4jClientAsync) -> None:
+    with pytest.raises(ValueError, match="Batch size must be positive"):
+        await client_async.batch_write("Q", [], batch_size=0)
+
+
+@pytest.mark.asyncio
+async def test_async_merge_nodes(client_async: Neo4jClientAsync, mock_async_driver: Any) -> None:
+    data = [{"id": 1}]
+    await client_async.merge_nodes("Label", data, merge_keys=["id"])
+    mock_async_driver.execute_query.assert_called_once()
+    assert "MERGE" in mock_async_driver.execute_query.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_async_merge_nodes_invalid_keys(client_async: Neo4jClientAsync) -> None:
+    with pytest.raises(ValueError, match="merge_keys must not be empty"):
+        await client_async.merge_nodes("Label", [{"id": 1}], merge_keys=[])
+
+
+@pytest.mark.asyncio
+async def test_async_merge_relationships(client_async: Neo4jClientAsync, mock_async_driver: Any) -> None:
+    data = [{"start": 1, "end": 2}]
+    await client_async.merge_relationships("S", "start", "E", "end", "REL", data)
+    mock_async_driver.execute_query.assert_called_once()
+    assert "MERGE" in mock_async_driver.execute_query.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_async_to_networkx(client_async: Neo4jClientAsync, mock_async_driver: Any, mocker: MockFixture) -> None:
+    node_mock = mocker.create_autospec(Node, instance=True)
+    node_mock.element_id = "n1"
+    node_mock.labels = {"A"}
+    node_mock.items.return_value = []
+
+    record_mock = MagicMock()
+    record_mock.values.return_value = [node_mock]
+
+    mock_async_driver.execute_query.return_value = ([record_mock], None, None)
+
+    graph = await client_async.to_networkx("MATCH...")
+    assert "n1" in graph.nodes
+
+
+@pytest.mark.asyncio
+async def test_async_verify_connectivity_failure(
+    client_async: Neo4jClientAsync, mock_async_driver: Any, mocker: MockFixture
+) -> None:
+    mock_async_driver.verify_connectivity.side_effect = ServiceUnavailable("Fail")
+    mock_logger = mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.logger")
+
+    with pytest.raises(ServiceUnavailable):
+        await client_async.verify_connectivity()
+
+    mock_logger.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_execute_query_failure(client_async: Neo4jClientAsync, mock_async_driver: Any) -> None:
+    mock_async_driver.execute_query.side_effect = Exception("Fail")
+    with pytest.raises(Exception, match="Fail"):
+        await client_async.execute_query("Q")
+
+
+@pytest.mark.asyncio
+async def test_async_batch_write_failure(
+    client_async: Neo4jClientAsync, mock_async_driver: Any, mocker: MockFixture
+) -> None:
+    mock_async_driver.execute_query.side_effect = Exception("Batch Fail")
+    mock_logger = mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.logger")
+
+    with pytest.raises(Exception, match="Batch Fail"):
+        await client_async.batch_write("Q", [{"id": 1}])
+
+    # Called twice: 1 for query failure, 1 for batch failure catch
+    assert mock_logger.error.call_count == 2
+    mock_logger.error.assert_any_call("Query execution failed: Batch Fail")
+    mock_logger.error.assert_any_call("Batch write failed after processing 0 records: Batch Fail")
+
+
+@pytest.mark.asyncio
+async def test_async_to_networkx_failure(
+    client_async: Neo4jClientAsync, mock_async_driver: Any, mocker: MockFixture
+) -> None:
+    mock_async_driver.execute_query.side_effect = Exception("Convert Fail")
+    mock_logger = mocker.patch("coreason_graph_nexus.adapters.neo4j_adapter.logger")
+
+    with pytest.raises(Exception, match="Convert Fail"):
+        await client_async.to_networkx("Q")
+
+    mock_logger.error.assert_called_once()
