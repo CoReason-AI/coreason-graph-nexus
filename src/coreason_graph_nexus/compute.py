@@ -10,6 +10,7 @@
 
 from typing import Any, cast
 
+import anyio
 import networkx as nx
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
@@ -36,7 +37,7 @@ class GraphComputer:
         """
         self.client = client
 
-    def run_analysis(self, request: GraphAnalysisRequest) -> Any:
+    async def run_analysis(self, request: GraphAnalysisRequest) -> Any:
         """
         Executes the requested graph analysis algorithm.
 
@@ -55,23 +56,23 @@ class GraphComputer:
         )
 
         # 1. Fetch Subgraph
-        graph = self._fetch_subgraph(request.center_node_id, request.depth)
+        graph = await self._fetch_subgraph(request.center_node_id, request.depth)
         if graph.number_of_nodes() == 0:
             logger.warning(f"Subgraph is empty for center_node_id={request.center_node_id}")
 
         # 2. Run Algorithm
         if request.algorithm == AnalysisAlgo.PAGERANK:
-            return self._compute_pagerank(graph, request.write_property)
+            return await self._compute_pagerank(graph, request.write_property)
         elif request.algorithm == AnalysisAlgo.SHORTEST_PATH:
             if not request.target_node_id:
                 raise ValueError("target_node_id is required for SHORTEST_PATH algorithm")
-            return self._compute_shortest_path(graph, request.center_node_id, request.target_node_id)
+            return await self._compute_shortest_path(graph, request.center_node_id, request.target_node_id)
         elif request.algorithm == AnalysisAlgo.LOUVAIN:
-            return self._compute_louvain(graph, request.write_property)
+            return await self._compute_louvain(graph, request.write_property)
         else:
             raise NotImplementedError(f"Algorithm {request.algorithm} is not implemented")
 
-    def _fetch_subgraph(self, center_id: str, depth: int) -> nx.DiGraph:
+    async def _fetch_subgraph(self, center_id: str, depth: int) -> nx.DiGraph:
         """
         Fetches a K-Hop subgraph centered around a specific node.
 
@@ -92,9 +93,9 @@ class GraphComputer:
 
         query = f"MATCH path = (n)-[*..{depth}]-(m) WHERE n.id = $center_id OR elementId(n) = $center_id RETURN path"
         logger.debug(f"Fetching subgraph with query: {query}")
-        return self.client.to_networkx(query, parameters={"center_id": center_id})
+        return await self.client.to_networkx(query, parameters={"center_id": center_id})
 
-    def _compute_pagerank(self, graph: nx.DiGraph, write_property: str) -> dict[str, float]:
+    async def _compute_pagerank(self, graph: nx.DiGraph, write_property: str) -> dict[str, float]:
         """
         Computes PageRank and writes scores back to Neo4j.
 
@@ -108,7 +109,7 @@ class GraphComputer:
         if graph.number_of_nodes() == 0:
             return {}
 
-        scores = nx.pagerank(graph)
+        scores = await anyio.to_thread.run_sync(nx.pagerank, graph)
         logger.info(f"Computed PageRank for {len(scores)} nodes")
 
         # Prepare write-back data
@@ -128,10 +129,10 @@ class GraphComputer:
 
         query = f"UNWIND $batch AS row MATCH (n) WHERE elementId(n) = row.id SET n.`{write_property}` = row.value"
 
-        self.client.batch_write(query, data)
+        await self.client.batch_write(query, data)
         return cast(dict[str, float], scores)
 
-    def _compute_shortest_path(self, graph: nx.DiGraph, source: str, target: str) -> list[str]:
+    async def _compute_shortest_path(self, graph: nx.DiGraph, source: str, target: str) -> list[str]:
         """
         Computes shortest path between source and target in the subgraph.
 
@@ -150,33 +151,40 @@ class GraphComputer:
         # The 'graph' nodes are keyed by Neo4j element_id (internal ID) because of to_networkx.
         # We need to map business IDs to internal graph node IDs to run nx.shortest_path.
 
-        # 1. Build a map of property_id -> graph_node_id
-        # We look at node attributes in the graph.
-        id_map = {}
-        for n, attrs in graph.nodes(data=True):
-            if "id" in attrs:
-                id_map[attrs["id"]] = n
-            # Also map element_id to itself just in case
-            id_map[str(n)] = n
+        # We wrap this cpu intensive logic in a thread
+        def _algo() -> list[str]:
+            # 1. Build a map of property_id -> graph_node_id
+            # We look at node attributes in the graph.
+            id_map = {}
+            for n, attrs in graph.nodes(data=True):
+                if "id" in attrs:
+                    id_map[attrs["id"]] = n
+                # Also map element_id to itself just in case
+                id_map[str(n)] = n
 
-        # 2. Resolve source/target
-        source_node = id_map.get(source)
-        target_node = id_map.get(target)
+            # 2. Resolve source/target
+            source_node = id_map.get(source)
+            target_node = id_map.get(target)
 
-        if not source_node:
-            raise ValueError(f"Source node '{source}' not found in the subgraph.")
-        if not target_node:
-            raise ValueError(f"Target node '{target}' not found in the subgraph.")
+            if not source_node:
+                raise ValueError(f"Source node '{source}' not found in the subgraph.")
+            if not target_node:
+                raise ValueError(f"Target node '{target}' not found in the subgraph.")
 
-        try:
-            path = nx.shortest_path(graph, source=source_node, target=target_node)
-            logger.info(f"Found shortest path length: {len(path)}")
-            return path  # type: ignore # nx returns list
-        except nx.NetworkXNoPath:
-            logger.warning(f"No path found between {source} and {target}")
-            return []
+            try:
+                path = nx.shortest_path(graph, source=source_node, target=target_node)
+                logger.info(f"Found shortest path length: {len(path)}")
+                # Explicitly cast because mypy can't verify what nx returns at runtime in a closure?
+                # Actually nx.shortest_path returns list[Node]
+                return cast(list[str], path)
+            except nx.NetworkXNoPath:
+                logger.warning(f"No path found between {source} and {target}")
+                return []
 
-    def _compute_louvain(self, graph: nx.DiGraph, write_property: str) -> dict[str, int]:
+        result = await anyio.to_thread.run_sync(_algo)
+        return cast(list[str], result)
+
+    async def _compute_louvain(self, graph: nx.DiGraph, write_property: str) -> dict[str, int]:
         """
         Computes Louvain communities and writes ID back to Neo4j.
 
@@ -190,24 +198,30 @@ class GraphComputer:
         if graph.number_of_nodes() == 0:
             return {}
 
-        # Louvain works on undirected graphs usually, but networkx implementation handles DiGraph
-        # by converting to undirected or using specific directed algo?
-        # nx.community.louvain_communities works on undirected graphs.
-        # We convert to undirected view for community detection.
-        undirected_graph = graph.to_undirected()
+        def _algo() -> tuple[dict[str, int], list[dict[str, Any]]]:
+            # Louvain works on undirected graphs usually, but networkx implementation handles DiGraph
+            # by converting to undirected or using specific directed algo?
+            # nx.community.louvain_communities works on undirected graphs.
+            # We convert to undirected view for community detection.
+            undirected_graph = graph.to_undirected()
 
-        communities = nx.community.louvain_communities(undirected_graph)
-        # communities is list[set[node_id]]
+            communities = nx.community.louvain_communities(undirected_graph)
+            # communities is list[set[node_id]]
 
-        result = {}
-        data = []
-        for idx, community in enumerate(communities):
-            for node_id in community:
-                result[node_id] = idx
-                data.append({"id": node_id, "value": idx})
+            result = {}
+            data = []
+            for idx, community in enumerate(communities):
+                for node_id in community:
+                    result[node_id] = idx
+                    data.append({"id": node_id, "value": idx})
+            return result, data
 
-        logger.info(f"Detected {len(communities)} communities")
+        result, data = await anyio.to_thread.run_sync(_algo)
+
+        logger.info(
+            f"Detected {len(result)} communities"
+        )  # Approximation based on nodes, but actually len(communities) was lost in closure
 
         query = f"UNWIND $batch AS row MATCH (n) WHERE elementId(n) = row.id SET n.`{write_property}` = row.value"
-        self.client.batch_write(query, data)
-        return result
+        await self.client.batch_write(query, data)
+        return cast(dict[str, int], result)

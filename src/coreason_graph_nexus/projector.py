@@ -41,7 +41,7 @@ class ProjectionEngine:
         self.client = client
         self.resolver = resolver
 
-    def ingest_entities(
+    async def ingest_entities(
         self,
         manifest: ProjectionManifest,
         adapter: SourceAdapter,
@@ -72,15 +72,15 @@ class ProjectionEngine:
                 row_iterator = adapter.read_table(entity.source_table)
 
                 # Processor Closure
-                def processor(row: dict[str, Any], entity: Entity = entity) -> dict[str, Any] | None:
-                    return self._process_entity_row(row, entity, job)
+                async def processor(row: dict[str, Any], entity: Entity = entity) -> dict[str, Any] | None:
+                    return await self._process_entity_row(row, entity, job)
 
                 # Consumer Closure
-                def consumer(batch: list[dict[str, Any]], entity: Entity = entity) -> None:
-                    self._flush_nodes(entity.name, batch, batch_size)
+                async def consumer(batch: list[dict[str, Any]], entity: Entity = entity) -> None:
+                    await self._flush_nodes(entity.name, batch, batch_size)
                     job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch)
 
-                process_and_batch(row_iterator, processor, consumer, batch_size)
+                await process_and_batch(row_iterator, processor, consumer, batch_size)  # type: ignore[misc]
 
             except Exception as e:
                 logger.error(f"Failed to ingest entity {entity.name}: {e}")
@@ -88,7 +88,7 @@ class ProjectionEngine:
 
         logger.info(f"Entity ingestion complete. Nodes created: {job.metrics.get('nodes_created', 0)}")
 
-    def ingest_relationships(
+    async def ingest_relationships(
         self,
         manifest: ProjectionManifest,
         adapter: SourceAdapter,
@@ -118,15 +118,15 @@ class ProjectionEngine:
                 row_iterator = adapter.read_table(rel.source_table)
 
                 # Processor Closure
-                def processor(row: dict[str, Any], rel: Relationship = rel) -> dict[str, Any] | None:
-                    return self._process_relationship_row(row, rel, job)
+                async def processor(row: dict[str, Any], rel: Relationship = rel) -> dict[str, Any] | None:
+                    return await self._process_relationship_row(row, rel, job)
 
                 # Consumer Closure
-                def consumer(batch: list[dict[str, Any]], rel: Relationship = rel) -> None:
-                    self._flush_relationships(rel, batch, batch_size)
+                async def consumer(batch: list[dict[str, Any]], rel: Relationship = rel) -> None:
+                    await self._flush_relationships(rel, batch, batch_size)
                     job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch)
 
-                process_and_batch(row_iterator, processor, consumer, batch_size)
+                await process_and_batch(row_iterator, processor, consumer, batch_size)  # type: ignore[misc]
 
             except Exception as e:
                 logger.error(f"Failed to ingest relationship {rel.name}: {e}")
@@ -134,7 +134,7 @@ class ProjectionEngine:
 
         logger.info(f"Relationship ingestion complete. Edges created: {job.metrics.get('edges_created', 0)}")
 
-    def _process_entity_row(self, row: dict[str, Any], entity: Entity, job: GraphJob) -> dict[str, Any] | None:
+    async def _process_entity_row(self, row: dict[str, Any], entity: Entity, job: GraphJob) -> dict[str, Any] | None:
         """
         Processes a single row for entity ingestion.
 
@@ -153,7 +153,7 @@ class ProjectionEngine:
 
         # Resolve Ontology
         term_to_resolve = str(source_id)
-        resolved_id, is_cache_hit = self.resolver.resolve(term_to_resolve)
+        resolved_id, is_cache_hit = await self.resolver.resolve(term_to_resolve)
 
         final_id = resolved_id if resolved_id else term_to_resolve
 
@@ -172,7 +172,9 @@ class ProjectionEngine:
 
         return node_props
 
-    def _process_relationship_row(self, row: dict[str, Any], rel: Relationship, job: GraphJob) -> dict[str, Any] | None:
+    async def _process_relationship_row(
+        self, row: dict[str, Any], rel: Relationship, job: GraphJob
+    ) -> dict[str, Any] | None:
         """
         Processes a single row for relationship ingestion.
 
@@ -193,7 +195,7 @@ class ProjectionEngine:
 
         # Resolve Start Node
         start_term = str(source_start)
-        resolved_start, is_start_cache_hit = self.resolver.resolve(start_term)
+        resolved_start, is_start_cache_hit = await self.resolver.resolve(start_term)
         if not resolved_start:
             job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
             final_start = start_term
@@ -204,7 +206,7 @@ class ProjectionEngine:
 
         # Resolve End Node
         end_term = str(source_end)
-        resolved_end, is_end_cache_hit = self.resolver.resolve(end_term)
+        resolved_end, is_end_cache_hit = await self.resolver.resolve(end_term)
         if not resolved_end:
             job.metrics["ontology_misses"] = float(job.metrics.get("ontology_misses", 0.0)) + 1.0
             final_end = end_term
@@ -220,13 +222,13 @@ class ProjectionEngine:
 
         return rel_props
 
-    def _flush_nodes(self, label: str, data: list[dict[str, Any]], batch_size: int) -> None:
+    async def _flush_nodes(self, label: str, data: list[dict[str, Any]], batch_size: int) -> None:
         """Helper to write a batch of nodes."""
-        self.client.merge_nodes(label, data, merge_keys=["id"], batch_size=batch_size)
+        await self.client.merge_nodes(label, data, merge_keys=["id"], batch_size=batch_size)
 
-    def _flush_relationships(self, rel: Relationship, data: list[dict[str, Any]], batch_size: int) -> None:
+    async def _flush_relationships(self, rel: Relationship, data: list[dict[str, Any]], batch_size: int) -> None:
         """Helper to write a batch of relationships."""
-        self.client.merge_relationships(
+        await self.client.merge_relationships(
             start_label=rel.start_node,
             start_data_key=rel.start_key,
             end_label=rel.end_node,

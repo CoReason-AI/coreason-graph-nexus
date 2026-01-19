@@ -10,6 +10,7 @@
 
 from typing import Any
 
+import anyio
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -36,7 +37,7 @@ class LinkPredictor:
         """
         self.client = client
 
-    def predict_links(self, request: LinkPredictionRequest) -> None:
+    async def predict_links(self, request: LinkPredictionRequest) -> None:
         """
         Executes the link prediction based on the request configuration.
 
@@ -53,13 +54,13 @@ class LinkPredictor:
             if not request.heuristic_query:
                 # Should be caught by validation, but defensive programming
                 raise ValueError("Heuristic query is missing.")
-            self._run_heuristic(request.heuristic_query)
+            await self._run_heuristic(request.heuristic_query)
         elif request.method == LinkPredictionMethod.SEMANTIC:
-            self._run_semantic(request)
+            await self._run_semantic(request)
         else:
             raise NotImplementedError(f"Method {request.method} is not implemented.")
 
-    def _run_heuristic(self, query: str) -> None:
+    async def _run_heuristic(self, query: str) -> None:
         """
         Executes a Cypher-based heuristic rule.
 
@@ -73,13 +74,13 @@ class LinkPredictor:
             # Execute the query.
             # We assume the query handles the logic (MERGE/CREATE).
             # Neo4jClient.execute_query returns data, but we don't necessarily expect data returned.
-            self.client.execute_query(query)
+            await self.client.execute_query(query)
             logger.info("Heuristic rule execution complete.")
         except Exception as e:
             logger.error(f"Failed to execute heuristic rule: {e}")
             raise
 
-    def _run_semantic(self, request: LinkPredictionRequest) -> None:
+    async def _run_semantic(self, request: LinkPredictionRequest) -> None:
         """
         Executes semantic link prediction using vector embeddings.
 
@@ -99,54 +100,25 @@ class LinkPredictor:
         )
 
         # 1. Fetch Source Embeddings
-        source_data = self._fetch_embeddings(request.source_label, request.embedding_property)
+        source_data = await self._fetch_embeddings(request.source_label, request.embedding_property)
         if not source_data:
             logger.warning(f"No embeddings found for source label: {request.source_label}")
             return
 
         # 2. Fetch Target Embeddings
-        target_data = self._fetch_embeddings(request.target_label, request.embedding_property)
+        target_data = await self._fetch_embeddings(request.target_label, request.embedding_property)
         if not target_data:
             logger.warning(f"No embeddings found for target label: {request.target_label}")
             return
 
-        # 3. Compute Similarity
+        # 3. Compute Similarity (CPU intensive, wrap in thread)
         logger.info(
             f"Computing cosine similarity between {len(source_data)} source and {len(target_data)} target nodes."
         )
-        source_ids = [item["id"] for item in source_data]
-        source_vecs = np.array([item["embedding"] for item in source_data])
 
-        target_ids = [item["id"] for item in target_data]
-        target_vecs = np.array([item["embedding"] for item in target_data])
-
-        # Result shape: (n_source, n_target)
-        similarity_matrix = cosine_similarity(source_vecs, target_vecs)
-
-        # 4. Filter and Prepare Write
-        relationships_to_create = []
-
-        # Optimize iteration?
-        # We can use numpy where to find indices
-        # threshold filtering
-        rows, cols = np.where(similarity_matrix >= request.threshold)
-
-        for r, c in zip(rows, cols, strict=True):
-            score = float(similarity_matrix[r, c])
-            s_id = source_ids[r]
-            t_id = target_ids[c]
-
-            # Skip self-loops if source and target are the same node
-            if s_id == t_id:
-                continue
-
-            relationships_to_create.append(
-                {
-                    "start_id": s_id,
-                    "end_id": t_id,
-                    "score": score,
-                }
-            )
+        relationships_to_create = await anyio.to_thread.run_sync(
+            self._compute_similarity, source_data, target_data, request.threshold
+        )
 
         logger.info(f"Found {len(relationships_to_create)} implicit relationships above threshold.")
 
@@ -166,10 +138,52 @@ class LinkPredictor:
             f"SET r.score = row.score"
         )
 
-        self.client.batch_write(query, relationships_to_create, batch_size=5000)
+        await self.client.batch_write(query, relationships_to_create, batch_size=5000)
         logger.info("Semantic link prediction complete.")
 
-    def _fetch_embeddings(self, label: str, property_key: str) -> list[dict[str, Any]]:
+    def _compute_similarity(
+        self, source_data: list[dict[str, Any]], target_data: list[dict[str, Any]], threshold: float
+    ) -> list[dict[str, Any]]:
+        """
+        Computes cosine similarity and returns relationships to create.
+        This runs in a thread.
+        """
+        source_ids = [item["id"] for item in source_data]
+        source_vecs = np.array([item["embedding"] for item in source_data])
+
+        target_ids = [item["id"] for item in target_data]
+        target_vecs = np.array([item["embedding"] for item in target_data])
+
+        # Result shape: (n_source, n_target)
+        similarity_matrix = cosine_similarity(source_vecs, target_vecs)
+
+        # 4. Filter and Prepare Write
+        relationships_to_create = []
+
+        # Optimize iteration?
+        # We can use numpy where to find indices
+        # threshold filtering
+        rows, cols = np.where(similarity_matrix >= threshold)
+
+        for r, c in zip(rows, cols, strict=True):
+            score = float(similarity_matrix[r, c])
+            s_id = source_ids[r]
+            t_id = target_ids[c]
+
+            # Skip self-loops if source and target are the same node
+            if s_id == t_id:
+                continue
+
+            relationships_to_create.append(
+                {
+                    "start_id": s_id,
+                    "end_id": t_id,
+                    "score": score,
+                }
+            )
+        return relationships_to_create
+
+    async def _fetch_embeddings(self, label: str, property_key: str) -> list[dict[str, Any]]:
         """
         Fetches node IDs and their embeddings from Neo4j.
 
@@ -186,4 +200,4 @@ class LinkPredictor:
             f"WHERE n.`{property_key}` IS NOT NULL "
             f"RETURN elementId(n) as id, n.`{property_key}` as embedding"
         )
-        return self.client.execute_query(query)
+        return await self.client.execute_query(query)

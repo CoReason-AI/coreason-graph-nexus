@@ -8,8 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from collections.abc import Callable, Iterable, Iterator
-from itertools import batched
+from collections.abc import AsyncIterable, Callable
 from typing import Any, TypeVar
 
 from coreason_graph_nexus.utils.logger import logger
@@ -18,20 +17,21 @@ T = TypeVar("T")  # Input type
 R = TypeVar("R")  # Result type (processed)
 
 
-def process_and_batch(
-    items: Iterable[T],
+async def process_and_batch(
+    items: AsyncIterable[T],
     processor: Callable[[T], R | None],
     consumer: Callable[[list[R]], Any],
     batch_size: int,
 ) -> int:
     """
-    Processes an iterable of items, filters None values, batches them,
-    and passes each batch to a consumer.
+    Processes an async iterable of items, filters None values, batches them,
+    and passes each batch to an async consumer.
 
     Args:
-        items: An iterable of input items.
+        items: An async iterable of input items.
         processor: A function that takes an item and returns a processed item or None to skip.
-        consumer: A function that takes a list of processed items (a batch) and performs an action (e.g., DB write).
+        consumer: An async function that takes a list of processed items (a batch) and performs an
+                  action (e.g., DB write).
         batch_size: The size of each batch.
 
     Returns:
@@ -41,19 +41,31 @@ def process_and_batch(
         Exception: If the consumer raises an exception during batch processing.
     """
     processed_count = 0
+    current_batch: list[R] = []
 
-    # Generator: Process items lazily
-    processed_stream: Iterator[R] = (result for item in items if (result := processor(item)) is not None)
+    async for item in items:
+        result = processor(item)
+        if result is None:
+            continue
 
-    # Batch and Consume
-    for batch_tuple in batched(processed_stream, batch_size):
-        batch_list = list(batch_tuple)
+        current_batch.append(result)
 
+        if len(current_batch) >= batch_size:
+            try:
+                await consumer(current_batch)
+                processed_count += len(current_batch)
+                current_batch = []
+            except Exception as e:
+                logger.error(f"Failed to process batch of size {len(current_batch)}: {e}")
+                raise
+
+    # Process remaining items
+    if current_batch:
         try:
-            consumer(batch_list)
-            processed_count += len(batch_list)
+            await consumer(current_batch)
+            processed_count += len(current_batch)
         except Exception as e:
-            logger.error(f"Failed to process batch of size {len(batch_list)}: {e}")
+            logger.error(f"Failed to process final batch of size {len(current_batch)}: {e}")
             raise
 
     return processed_count

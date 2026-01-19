@@ -18,13 +18,13 @@ from coreason_graph_nexus.utils.logger import logger
 class RedisClientProtocol(Protocol):
     """Protocol for Redis client to allow type checking without hard dependency."""
 
-    def get(self, key: str) -> bytes | None: ...
-    def setex(self, key: str, time: int, value: str) -> Any: ...
+    async def get(self, key: str) -> bytes | None: ...
+    async def setex(self, key: str, time: int, value: str) -> Any: ...
 
 
 def cached_resolver(
     ttl: int = 86400,
-) -> Callable[[Callable[[Any, str], str | None]], Callable[[Any, str], tuple[str | None, bool]]]:
+) -> Callable[[Callable[[Any, str], Any]], Callable[[Any, str], Any]]:
     """
     Decorator to cache the result of an ontology resolution method in Redis.
 
@@ -40,17 +40,18 @@ def cached_resolver(
     """
 
     def decorator(
-        func: Callable[[Any, str], str | None],
-    ) -> Callable[[Any, str], tuple[str | None, bool]]:
+        func: Callable[[Any, str], Any],
+    ) -> Callable[[Any, str], Any]:
         @functools.wraps(func)
-        def wrapper(self: Any, term: str) -> tuple[str | None, bool]:
+        async def wrapper(self: Any, term: str) -> tuple[str | None, bool]:
             if not hasattr(self, "redis_client") or self.redis_client is None:
                 logger.warning("Redis client not available in self.redis_client. Skipping cache.")
-                return func(self, term), False
+                result = await func(self, term)
+                return result, False
 
             key = f"resolve:{term}"
             try:
-                cached = self.redis_client.get(key)
+                cached = await self.redis_client.get(key)
                 if cached:
                     logger.debug(f"Cache hit for '{term}': {cached}")
                     # Redis returns bytes, decode to str
@@ -60,11 +61,11 @@ def cached_resolver(
                 logger.error(f"Redis get failed for key {key}: {e}")
 
             # Call the actual function
-            result = func(self, term)
+            result = await func(self, term)
 
             if result:
                 try:
-                    self.redis_client.setex(key, ttl, result)
+                    await self.redis_client.setex(key, ttl, result)
                     logger.debug(f"Cache set for '{term}' -> '{result}' (TTL: {ttl}s)")
                 except Exception as e:
                     logger.error(f"Redis setex failed for key {key}: {e}")
@@ -84,7 +85,7 @@ class CodexClient:
     this class serves as a placeholder/interface for the integration.
     """
 
-    def lookup_concept(self, term: str) -> str | None:
+    async def lookup_concept(self, term: str) -> str | None:
         """
         Looks up a concept in the Codex.
 
@@ -116,8 +117,8 @@ class RedisOntologyResolver(OntologyResolver):
         self.redis_client = redis_client
         self.codex_client = codex_client or CodexClient()
 
-    @cached_resolver(ttl=86400)  # type: ignore[arg-type]
-    def resolve(self, term: str) -> tuple[str | None, bool]:
+    @cached_resolver(ttl=86400)
+    async def resolve(self, term: str) -> tuple[str | None, bool]:
         """
         Resolves a term to a canonical ID.
 
@@ -129,4 +130,4 @@ class RedisOntologyResolver(OntologyResolver):
         Returns:
             A tuple of (canonical identifier (str) | None, is_cache_hit (bool)).
         """
-        return self.codex_client.lookup_concept(term)  # type: ignore[return-value]
+        return await self.codex_client.lookup_concept(term)  # type: ignore[return-value]

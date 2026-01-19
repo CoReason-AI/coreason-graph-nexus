@@ -14,7 +14,7 @@ from types import TracebackType
 from typing import Any, Self, cast
 
 import networkx as nx
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
 from neo4j.graph import Node, Path, Relationship
 
@@ -48,10 +48,10 @@ class Neo4jClient:
         self._uri = uri
         self._auth = auth
         self._database = database
-        self._driver = GraphDatabase.driver(uri, auth=auth)
+        self._driver = AsyncGraphDatabase.driver(uri, auth=auth)
         logger.info(f"Initialized Neo4j driver for {uri} (db: {database})")
 
-    def __enter__(self) -> Self:
+    async def __aenter__(self) -> Self:
         """
         Enters the runtime context related to this object.
 
@@ -60,10 +60,10 @@ class Neo4jClient:
         Returns:
             The Neo4jClient instance.
         """
-        self.verify_connectivity()
+        await self.verify_connectivity()
         return self
 
-    def __exit__(
+    async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
@@ -77,17 +77,17 @@ class Neo4jClient:
             exc_val: Exception value.
             exc_tb: Exception traceback.
         """
-        self.close()
+        await self.close()
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """
         Closes the underlying Neo4j driver.
         """
         if self._driver:
-            self._driver.close()
+            await self._driver.close()
             logger.info("Closed Neo4j driver")
 
-    def verify_connectivity(self) -> None:
+    async def verify_connectivity(self) -> None:
         """
         Verifies that the driver can connect to the database.
 
@@ -95,13 +95,13 @@ class Neo4jClient:
             ServiceUnavailable: If the database is not reachable.
         """
         try:
-            self._driver.verify_connectivity()
+            await self._driver.verify_connectivity()
             logger.info("Neo4j connectivity verified")
         except ServiceUnavailable as e:
             logger.error(f"Failed to connect to Neo4j: {e}")
             raise
 
-    def execute_query(self, query: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    async def execute_query(self, query: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """
         Executes a Cypher query against the configured database.
 
@@ -121,7 +121,7 @@ class Neo4jClient:
         try:
             # We use execute_query which is the modern, recommended API in the 5.x+ driver
             # It handles retries and session management automatically.
-            records, _, _ = self._driver.execute_query(
+            records, _, _ = await self._driver.execute_query(
                 query,
                 parameters_=parameters,
                 database_=self._database,
@@ -133,7 +133,7 @@ class Neo4jClient:
             logger.error(f"Query execution failed: {e}")
             raise
 
-    def batch_write(
+    async def batch_write(
         self,
         query: str,
         data: Iterable[dict[str, Any]],
@@ -168,7 +168,7 @@ class Neo4jClient:
             # Convert tuple from batched to list for Neo4j driver
             chunk_list = list(chunk)
             try:
-                self.execute_query(query, parameters={batch_param_name: chunk_list})
+                await self.execute_query(query, parameters={batch_param_name: chunk_list})
                 count += len(chunk_list)
             except Exception as e:
                 logger.error(f"Batch write failed after processing {count} records: {e}")
@@ -179,7 +179,7 @@ class Neo4jClient:
         else:
             logger.info(f"Batch write completed: {count} records processed.")
 
-    def merge_nodes(
+    async def merge_nodes(
         self,
         label: str,
         data: Iterable[dict[str, Any]],
@@ -215,9 +215,9 @@ class Neo4jClient:
         query = f"UNWIND $batch AS row MERGE (n:`{label}` {{ {merge_props_str} }}) SET n += row"
 
         logger.info(f"Merging nodes (Label: {label}) using keys: {merge_keys}")
-        self.batch_write(query, data, batch_size=batch_size)
+        await self.batch_write(query, data, batch_size=batch_size)
 
-    def merge_relationships(
+    async def merge_relationships(
         self,
         start_label: str,
         start_data_key: str,
@@ -256,9 +256,9 @@ class Neo4jClient:
         )
 
         logger.info(f"Merging relationships ({start_label})-[{rel_type}]->({end_label})")
-        self.batch_write(query, data, batch_size=batch_size)
+        await self.batch_write(query, data, batch_size=batch_size)
 
-    def to_networkx(self, query: str, parameters: dict[str, Any] | None = None) -> nx.DiGraph:
+    async def to_networkx(self, query: str, parameters: dict[str, Any] | None = None) -> nx.DiGraph:
         """
         Executes a Cypher query and converts the result into a NetworkX DiGraph.
 
@@ -282,7 +282,7 @@ class Neo4jClient:
         graph = nx.DiGraph()
 
         try:
-            records, _, _ = self._driver.execute_query(
+            records, _, _ = await self._driver.execute_query(
                 query,
                 parameters_=parameters,
                 database_=self._database,

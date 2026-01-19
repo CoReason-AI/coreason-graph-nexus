@@ -8,14 +8,47 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from collections.abc import Generator
-from unittest.mock import MagicMock, patch
+import contextvars
+from collections.abc import AsyncIterator
+from typing import Any
 
-import pytest
+from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
+
+# Context propagation example
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="unknown")
 
 
-@pytest.fixture
-def mock_driver() -> Generator[MagicMock, None, None]:
-    """Mock the neo4j.GraphDatabase.driver."""
-    with patch("coreason_graph_nexus.adapters.neo4j_adapter.GraphDatabase.driver") as mock:
-        yield mock
+class MockSourceAdapter(SourceAdapter):
+    """
+    Mock Source Adapter for testing.
+    """
+
+    def __init__(self, data: dict[str, list[dict[str, Any]]]) -> None:
+        self.data = data
+        self.connected = False
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    async def disconnect(self) -> None:
+        self.connected = False
+
+    async def read_table(self, table_name: str) -> AsyncIterator[dict[str, Any]]:
+        if not self.connected:
+            raise RuntimeError("Not connected")
+
+        rows = self.data.get(table_name, [])
+        for row in rows:
+            yield row
+
+
+class MockOntologyResolver(OntologyResolver):
+    """
+    Mock Ontology Resolver for testing.
+    """
+
+    def __init__(self, mapping: dict[str, str]) -> None:
+        self.mapping = mapping
+
+    async def resolve(self, term: str) -> tuple[str | None, bool]:
+        return self.mapping.get(term), True

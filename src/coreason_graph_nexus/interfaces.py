@@ -9,7 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from types import TracebackType
 from typing import Any, Self
 
@@ -24,17 +24,17 @@ class SourceAdapter(ABC):
     """
 
     @abstractmethod
-    def connect(self) -> None:
+    async def connect(self) -> None:
         """Establishes the connection to the data source."""
         ...
 
     @abstractmethod
-    def disconnect(self) -> None:
+    async def disconnect(self) -> None:
         """Closes the connection to the data source."""
         ...
 
     @abstractmethod
-    def read_table(self, table_name: str) -> Iterator[dict[str, Any]]:
+    def read_table(self, table_name: str) -> AsyncIterator[dict[str, Any]]:
         """
         Reads data from the specified table or view.
 
@@ -46,17 +46,17 @@ class SourceAdapter(ABC):
         """
         ...
 
-    def __enter__(self) -> Self:
-        self.connect()
+    async def __aenter__(self) -> Self:
+        await self.connect()
         return self
 
-    def __exit__(
+    async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        self.disconnect()
+        await self.disconnect()
 
 
 class OntologyResolver(ABC):
@@ -68,7 +68,7 @@ class OntologyResolver(ABC):
     """
 
     @abstractmethod
-    def resolve(self, term: str) -> tuple[str | None, bool]:
+    async def resolve(self, term: str) -> tuple[str | None, bool]:
         """
         Resolves a source term to a canonical identifier.
 
