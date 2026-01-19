@@ -56,6 +56,9 @@ class Neo4jClient:
         Enters the runtime context related to this object.
 
         Verifies connectivity on entry.
+
+        Returns:
+            The Neo4jClient instance.
         """
         self.verify_connectivity()
         return self
@@ -68,6 +71,11 @@ class Neo4jClient:
     ) -> None:
         """
         Exits the runtime context and closes the driver.
+
+        Args:
+            exc_type: Exception type.
+            exc_val: Exception value.
+            exc_tb: Exception traceback.
         """
         self.close()
 
@@ -103,6 +111,9 @@ class Neo4jClient:
 
         Returns:
             A list of dictionaries, where each dictionary represents a record.
+
+        Raises:
+            Exception: If query execution fails.
         """
         if parameters is None:
             parameters = {}
@@ -142,6 +153,10 @@ class Neo4jClient:
             data: An iterable of dictionaries to be ingested.
             batch_size: The number of records to process in a single transaction.
             batch_param_name: The key used in the parameters dictionary for the list.
+
+        Raises:
+            ValueError: If batch_size is not positive.
+            Exception: If batch writing fails.
         """
         if batch_size <= 0:
             raise ValueError(f"Batch size must be positive, got {batch_size}")
@@ -184,6 +199,9 @@ class Neo4jClient:
             merge_keys: A list of property keys used to uniquely identify the node
                         (e.g., ["id"] or ["firstName", "lastName"]).
             batch_size: The number of records to process per transaction.
+
+        Raises:
+            ValueError: If merge_keys is empty.
         """
         if not merge_keys:
             raise ValueError("merge_keys must not be empty.")
@@ -254,6 +272,9 @@ class Neo4jClient:
 
         Returns:
             A networkx.DiGraph object representing the result subgraph.
+
+        Raises:
+            Exception: If query execution or conversion fails.
         """
         if parameters is None:
             parameters = {}
