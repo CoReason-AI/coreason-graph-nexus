@@ -80,7 +80,7 @@ class ProjectionEngine:
                     await self._flush_nodes(entity.name, batch, batch_size)
                     job.metrics["nodes_created"] = float(job.metrics.get("nodes_created", 0.0)) + len(batch)
 
-                await process_and_batch(row_iterator, processor, consumer, batch_size)  # type: ignore[misc]
+                await process_and_batch(row_iterator, processor, consumer, batch_size)
 
             except Exception as e:
                 logger.error(f"Failed to ingest entity {entity.name}: {e}")
@@ -126,7 +126,7 @@ class ProjectionEngine:
                     await self._flush_relationships(rel, batch, batch_size)
                     job.metrics["edges_created"] = float(job.metrics.get("edges_created", 0.0)) + len(batch)
 
-                await process_and_batch(row_iterator, processor, consumer, batch_size)  # type: ignore[misc]
+                await process_and_batch(row_iterator, processor, consumer, batch_size)
 
             except Exception as e:
                 logger.error(f"Failed to ingest relationship {rel.name}: {e}")

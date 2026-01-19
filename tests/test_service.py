@@ -109,9 +109,10 @@ async def test_service_async_projection(
     mock_driver.execute_query.return_value = ([], None, None)
 
     async with ServiceAsync() as svc:
-        job = await svc.run_projection(manifest, adapter, resolver, str(uuid.uuid4()))
-        assert job.status == "COMPLETE"
-        assert job.metrics["nodes_created"] == 2.0
+        async with adapter:
+            job = await svc.run_projection(manifest, adapter, resolver, str(uuid.uuid4()))
+            assert job.status == "COMPLETE"
+            assert job.metrics["nodes_created"] == 2.0
 
 
 def test_service_sync_facade(
@@ -120,6 +121,8 @@ def test_service_sync_facade(
     mock_driver = mocker.AsyncMock()
     mocker.patch("neo4j.AsyncGraphDatabase.driver", return_value=mock_driver)
     mock_driver.execute_query.return_value = ([], None, None)
+
+    adapter.connected = True
 
     with Service() as svc:
         job = svc.run_projection(manifest, adapter, resolver, str(uuid.uuid4()))

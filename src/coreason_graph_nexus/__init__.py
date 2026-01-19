@@ -19,7 +19,7 @@ __email__ = "gowtham.rao@coreason.ai"
 from types import TracebackType
 from typing import Any, Self, cast
 
-import anyio
+import anyio.from_thread
 import httpx
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClient
@@ -137,7 +137,8 @@ class Service:
         self._async = ServiceAsync()
 
     def __enter__(self) -> Self:
-        self._portal = anyio.start_blocking_portal()
+        self._portal_cm = anyio.from_thread.start_blocking_portal()
+        self._portal = self._portal_cm.__enter__()
         self._portal.call(self._async.__aenter__)
         return self
 
@@ -149,7 +150,7 @@ class Service:
     ) -> None:
         if hasattr(self, "_portal"):
             self._portal.call(self._async.__aexit__, exc_type, exc_val, exc_tb)
-            self._portal.close()
+            self._portal_cm.__exit__(exc_type, exc_val, exc_tb)
 
     def run_projection(
         self,

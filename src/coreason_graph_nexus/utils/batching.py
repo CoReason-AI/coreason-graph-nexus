@@ -8,6 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+import inspect
 from collections.abc import AsyncIterable, Callable
 from typing import Any, TypeVar
 
@@ -19,7 +20,7 @@ R = TypeVar("R")  # Result type (processed)
 
 async def process_and_batch(
     items: AsyncIterable[T],
-    processor: Callable[[T], R | None],
+    processor: Callable[[T], Any],
     consumer: Callable[[list[R]], Any],
     batch_size: int,
 ) -> int:
@@ -44,7 +45,13 @@ async def process_and_batch(
     current_batch: list[R] = []
 
     async for item in items:
-        result = processor(item)
+        raw_result = processor(item)
+
+        if inspect.isawaitable(raw_result):
+            result = await raw_result
+        else:
+            result = raw_result
+
         if result is None:
             continue
 

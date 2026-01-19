@@ -11,26 +11,33 @@
 from unittest.mock import MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from coreason_graph_nexus.ontology import CodexClient, RedisOntologyResolver, cached_resolver
 
 
+@pytest.mark.asyncio
 class TestRedisOntologyResolver:
     """
     Tests for the Redis-backed Ontology Resolver.
     """
 
     @pytest.fixture
-    def mock_redis(self) -> MagicMock:
+    def mock_redis(self, mocker: MockerFixture) -> MagicMock:
         """Mock the Redis client."""
-        return MagicMock()
+        mock = MagicMock()
+        mock.get = mocker.AsyncMock()
+        mock.setex = mocker.AsyncMock()
+        return mock
 
     @pytest.fixture
-    def mock_codex_client(self) -> MagicMock:
+    def mock_codex_client(self, mocker: MockerFixture) -> MagicMock:
         """Mock the Codex client."""
-        return MagicMock(spec=CodexClient)
+        mock = MagicMock(spec=CodexClient)
+        mock.lookup_concept = mocker.AsyncMock()
+        return mock
 
-    def test_cache_hit(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_cache_hit(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test that a cache hit returns the value from Redis without calling Codex.
         """
@@ -38,14 +45,14 @@ class TestRedisOntologyResolver:
         mock_redis.get.return_value = b"RxNorm:123"  # Redis returns bytes
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result, is_hit = resolver.resolve("Tylenol")
+        result, is_hit = await resolver.resolve("Tylenol")
 
         assert result == "RxNorm:123"
         assert is_hit is True
-        mock_redis.get.assert_called_once_with("resolve:Tylenol")
-        mock_codex_client.lookup_concept.assert_not_called()
+        mock_redis.get.assert_awaited_once_with("resolve:Tylenol")
+        mock_codex_client.lookup_concept.assert_not_awaited()
 
-    def test_cache_miss_found_in_codex(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_cache_miss_found_in_codex(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test that a cache miss calls Codex, returns the result, and caches it.
         """
@@ -55,16 +62,16 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = "RxNorm:456"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result, is_hit = resolver.resolve("Advil")
+        result, is_hit = await resolver.resolve("Advil")
 
         assert result == "RxNorm:456"
         assert is_hit is False
-        mock_redis.get.assert_called_once_with("resolve:Advil")
-        mock_codex_client.lookup_concept.assert_called_once_with("Advil")
+        mock_redis.get.assert_awaited_once_with("resolve:Advil")
+        mock_codex_client.lookup_concept.assert_awaited_once_with("Advil")
         # Verify it writes back to Redis with 24h TTL (86400 seconds)
-        mock_redis.setex.assert_called_once_with("resolve:Advil", 86400, "RxNorm:456")
+        mock_redis.setex.assert_awaited_once_with("resolve:Advil", 86400, "RxNorm:456")
 
-    def test_cache_miss_not_found_in_codex(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_cache_miss_not_found_in_codex(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test that if Codex returns None, we return None and do NOT cache None.
         """
@@ -74,14 +81,14 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = None
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result, is_hit = resolver.resolve("UnknownDrug")
+        result, is_hit = await resolver.resolve("UnknownDrug")
 
         assert result is None
         assert is_hit is False
-        mock_codex_client.lookup_concept.assert_called_once_with("UnknownDrug")
-        mock_redis.setex.assert_not_called()
+        mock_codex_client.lookup_concept.assert_awaited_once_with("UnknownDrug")
+        mock_redis.setex.assert_not_awaited()
 
-    def test_decorator_usage(self, mock_redis: MagicMock) -> None:
+    async def test_decorator_usage(self, mock_redis: MagicMock) -> None:
         """
         Test the standalone decorator if we choose to expose it directly.
         """
@@ -92,25 +99,25 @@ class TestRedisOntologyResolver:
                 self.redis_client = redis
 
             @cached_resolver(ttl=100)
-            def resolve(self, term: str) -> str:
+            async def resolve(self, term: str) -> str:
                 return "Computed:" + term
 
         service = MyService(mock_redis)
 
         # Scenario 1: Cache Miss
         mock_redis.get.return_value = None
-        result, is_hit = service.resolve("Test")
+        result, is_hit = await service.resolve("Test")
         assert result == "Computed:Test"
         assert is_hit is False
-        mock_redis.setex.assert_called_with("resolve:Test", 100, "Computed:Test")
+        mock_redis.setex.assert_awaited_with("resolve:Test", 100, "Computed:Test")
 
         # Scenario 2: Cache Hit
         mock_redis.get.return_value = b"Cached:Test"
-        result, is_hit = service.resolve("Test")
+        result, is_hit = await service.resolve("Test")
         assert result == "Cached:Test"
         assert is_hit is True
 
-    def test_missing_redis_client(self) -> None:
+    async def test_missing_redis_client(self) -> None:
         """
         Test that the decorator proceeds without caching if redis_client is missing or None.
         """
@@ -120,15 +127,15 @@ class TestRedisOntologyResolver:
                 self.redis_client = None
 
             @cached_resolver()
-            def resolve(self, term: str) -> str:
+            async def resolve(self, term: str) -> str:
                 return "Value:" + term
 
         service = MyServiceNoRedis()
-        result, is_hit = service.resolve("Test")
+        result, is_hit = await service.resolve("Test")
         assert result == "Value:Test"
         assert is_hit is False
 
-    def test_redis_get_exception(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_redis_get_exception(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test that if Redis.get fails, it logs error and calls the function.
         """
@@ -136,16 +143,16 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = "Result"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result, is_hit = resolver.resolve("Term")
+        result, is_hit = await resolver.resolve("Term")
 
         assert result == "Result"
         assert is_hit is False
-        mock_codex_client.lookup_concept.assert_called_once_with("Term")
+        mock_codex_client.lookup_concept.assert_awaited_once_with("Term")
         # Should still try to set if get failed? Yes, unless logic prevents.
         # Implementation: try get -> catch -> call func -> try set.
-        mock_redis.setex.assert_called_once()
+        mock_redis.setex.assert_awaited_once()
 
-    def test_redis_setex_exception(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_redis_setex_exception(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test that if Redis.setex fails, it logs error and returns result.
         """
@@ -154,20 +161,20 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = "Result"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result, is_hit = resolver.resolve("Term")
+        result, is_hit = await resolver.resolve("Term")
 
         assert result == "Result"
         assert is_hit is False
 
-    def test_codex_client_lookup(self) -> None:
+    async def test_codex_client_lookup(self) -> None:
         """
         Test the CodexClient placeholder directly to cover its log line.
         """
         client = CodexClient()
-        result = client.lookup_concept("Something")
+        result = await client.lookup_concept("Something")
         assert result is None
 
-    def test_resolve_special_characters(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_resolve_special_characters(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test that terms with special characters are handled correctly in Redis keys.
         """
@@ -177,15 +184,15 @@ class TestRedisOntologyResolver:
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
         term = "Drug A + B (Old)"
 
-        result, is_hit = resolver.resolve(term)
+        result, is_hit = await resolver.resolve(term)
 
         assert result == "ID:123"
         assert is_hit is False
         # The key should preserve the term exactly
-        mock_redis.get.assert_called_once_with("resolve:Drug A + B (Old)")
-        mock_redis.setex.assert_called_once_with("resolve:Drug A + B (Old)", 86400, "ID:123")
+        mock_redis.get.assert_awaited_once_with("resolve:Drug A + B (Old)")
+        mock_redis.setex.assert_awaited_once_with("resolve:Drug A + B (Old)", 86400, "ID:123")
 
-    def test_empty_string_input(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_empty_string_input(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test behavior with empty string input.
         """
@@ -193,13 +200,13 @@ class TestRedisOntologyResolver:
         mock_codex_client.lookup_concept.return_value = None
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result, is_hit = resolver.resolve("")
+        result, is_hit = await resolver.resolve("")
 
         assert result is None
         assert is_hit is False
-        mock_redis.get.assert_called_once_with("resolve:")
+        mock_redis.get.assert_awaited_once_with("resolve:")
 
-    def test_codex_exception_propagation(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_codex_exception_propagation(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test that exceptions raised by the backend (Codex) are propagated.
         """
@@ -209,12 +216,12 @@ class TestRedisOntologyResolver:
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
 
         with pytest.raises(ValueError, match="Backend Error"):
-            resolver.resolve("Term")
+            await resolver.resolve("Term")
 
         # Should not have tried to cache anything
-        mock_redis.setex.assert_not_called()
+        mock_redis.setex.assert_not_awaited()
 
-    def test_redis_returns_non_bytes(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
+    async def test_redis_returns_non_bytes(self, mock_redis: MagicMock, mock_codex_client: MagicMock) -> None:
         """
         Test handling when Redis returns a non-bytes object (e.g., str or int).
         """
@@ -222,13 +229,13 @@ class TestRedisOntologyResolver:
         mock_redis.get.return_value = "RxNorm:789"
 
         resolver = RedisOntologyResolver(redis_client=mock_redis, codex_client=mock_codex_client)
-        result, is_hit = resolver.resolve("DrugX")
+        result, is_hit = await resolver.resolve("DrugX")
 
         assert result == "RxNorm:789"
         assert is_hit is True  # If redis returns value, it's a hit
 
         # Scenario 2: Redis returns an integer (unlikely but robust code should handle it)
         mock_redis.get.return_value = 12345
-        result, is_hit = resolver.resolve("DrugY")
+        result, is_hit = await resolver.resolve("DrugY")
         assert result == "12345"
         assert is_hit is True
