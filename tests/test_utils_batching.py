@@ -13,7 +13,7 @@ from typing import Iterable
 import pytest
 from pytest_mock import MockFixture
 
-from coreason_graph_nexus.utils.batching import process_and_batch
+from coreason_graph_nexus.utils.batching import process_and_batch, process_and_batch_async
 
 
 def test_process_and_batch_basic() -> None:
@@ -111,3 +111,37 @@ def test_process_and_batch_logging_on_error(mocker: MockFixture) -> None:
 
     mock_logger.error.assert_called_once()
     assert "Failed to process batch" in mock_logger.error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_process_and_batch_async_basic() -> None:
+    """Test basic processing and batching logic (Async)."""
+    items: Iterable[int] = range(10)
+    processed_batches: list[list[int]] = []
+
+    def processor(x: int) -> int | None:
+        return x * 2
+
+    async def consumer(batch: list[int]) -> None:
+        processed_batches.append(batch)
+
+    count = await process_and_batch_async(items, processor, consumer, batch_size=3)
+
+    assert count == 10
+    assert len(processed_batches) == 4
+    assert processed_batches[0] == [0, 2, 4]
+    assert processed_batches[1] == [6, 8, 10]
+    assert processed_batches[2] == [12, 14, 16]
+    assert processed_batches[3] == [18]
+
+
+@pytest.mark.asyncio
+async def test_process_and_batch_async_exception() -> None:
+    """Test exception propagation in async consumer."""
+    items: list[int] = [1, 2, 3]
+
+    async def consumer(batch: list[int]) -> None:
+        raise ValueError("Async Fail")
+
+    with pytest.raises(ValueError, match="Async Fail"):
+        await process_and_batch_async(items, lambda x: x, consumer, batch_size=2)
