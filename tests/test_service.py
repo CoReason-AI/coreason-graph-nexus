@@ -9,14 +9,51 @@
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
 
 from coreason_graph_nexus import Service, ServiceAsync
+from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
 from coreason_graph_nexus.models import Entity, ProjectionManifest, PropertyMapping
-from tests.conftest import MockOntologyResolver, MockSourceAdapter
+
+
+class MockSourceAdapter(SourceAdapter):
+    """
+    Mock Source Adapter for testing.
+    """
+
+    def __init__(self, data: dict[str, list[dict[str, Any]]]) -> None:
+        self.data = data
+        self.connected = False
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    async def disconnect(self) -> None:
+        self.connected = False
+
+    async def read_table(self, table_name: str) -> AsyncIterator[dict[str, Any]]:
+        if not self.connected:
+            raise RuntimeError("Not connected")
+
+        rows = self.data.get(table_name, [])
+        for row in rows:
+            yield row
+
+
+class MockOntologyResolver(OntologyResolver):
+    """
+    Mock Ontology Resolver for testing.
+    """
+
+    def __init__(self, mapping: dict[str, str]) -> None:
+        self.mapping = mapping
+
+    async def resolve(self, term: str) -> tuple[str | None, bool]:
+        return self.mapping.get(term), True
 
 
 @pytest.fixture
