@@ -179,6 +179,7 @@ class GraphJob(BaseModel):
             "nodes_created": 0.0,
             "edges_created": 0.0,
             "ontology_misses": 0.0,
+            "ontology_cache_hits": 0.0,
         },
         description="Performance metrics collected during execution.",
     )
@@ -188,7 +189,7 @@ class GraphJob(BaseModel):
         """
         Validates that the metrics dictionary contains all required keys.
         """
-        required_keys = {"nodes_created", "edges_created", "ontology_misses"}
+        required_keys = {"nodes_created", "edges_created", "ontology_misses", "ontology_cache_hits"}
         missing_keys = required_keys - self.metrics.keys()
         if missing_keys:
             raise ValueError(f"Missing required metrics keys: {', '.join(sorted(missing_keys))}")
