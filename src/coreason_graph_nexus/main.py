@@ -8,9 +8,12 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-from coreason_graph_nexus.utils.logger import logger
+from coreason_graph_nexus.utils.logger import configure_logging, logger
 
 
 def hello_world() -> str:
+    # Initialize logging (idempotent setup for file sink)
+    configure_logging()
+
     logger.info("Hello World!")
     return "Hello World!"

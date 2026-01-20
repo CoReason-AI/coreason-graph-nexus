@@ -7,16 +7,3 @@
 # Commercial use beyond a 30-day trial requires a separate license.
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
-
-"""
-orchestration engine for knowledge graph
-"""
-
-__version__ = "0.1.0"
-__author__ = "Gowtham A Rao"
-__email__ = "gowtham.rao@coreason.ai"
-
-from .main import hello_world
-from .service import Service, ServiceAsync
-
-__all__ = ["hello_world", "Service", "ServiceAsync"]

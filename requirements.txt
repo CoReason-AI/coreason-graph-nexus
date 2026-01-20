@@ -1,0 +1,10 @@
+loguru
+pydantic
+pyyaml
+neo4j
+redis
+networkx
+numpy
+scipy
+scikit-learn
+pydantic-settings
