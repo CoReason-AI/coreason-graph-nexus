@@ -8,20 +8,20 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from pathlib import Path
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from pytest_mock import MockerFixture
 
 from coreason_graph_nexus.adapters.parquet_adapter import ParquetAdapter
 
 
 @pytest.fixture
-def parquet_file(tmp_path):
+def parquet_file(tmp_path: Path) -> str:
     file_path = tmp_path / "test.parquet"
-    data = [
-        pa.array([1, 2, 3, 4, 5]),
-        pa.array(["a", "b", "c", "d", "e"])
-    ]
+    data = [pa.array([1, 2, 3, 4, 5]), pa.array(["a", "b", "c", "d", "e"])]
     batch = pa.RecordBatch.from_arrays(data, names=["id", "value"])
     table = pa.Table.from_batches([batch])
     pq.write_table(table, file_path)
@@ -29,22 +29,19 @@ def parquet_file(tmp_path):
 
 
 @pytest.fixture
-def large_parquet_file(tmp_path):
+def large_parquet_file(tmp_path: Path) -> str:
     file_path = tmp_path / "large_test.parquet"
     # Create 20,000 rows to ensure we test iterating over batches (default batch size is 10,000)
     ids = range(20000)
     values = [str(i) for i in ids]
-    data = [
-        pa.array(ids),
-        pa.array(values)
-    ]
+    data = [pa.array(ids), pa.array(values)]
     batch = pa.RecordBatch.from_arrays(data, names=["id", "value"])
     table = pa.Table.from_batches([batch])
     pq.write_table(table, file_path)
     return str(file_path)
 
 
-def test_parquet_adapter_read(parquet_file):
+def test_parquet_adapter_read(parquet_file: str) -> None:
     """Test reading a simple parquet file."""
     adapter = ParquetAdapter()
     rows = list(adapter.read_table(parquet_file))
@@ -53,7 +50,7 @@ def test_parquet_adapter_read(parquet_file):
     assert rows[4] == {"id": 5, "value": "e"}
 
 
-def test_parquet_adapter_streaming(large_parquet_file):
+def test_parquet_adapter_streaming(large_parquet_file: str) -> None:
     """Test reading a large file to ensure all rows are returned."""
     adapter = ParquetAdapter()
     rows = list(adapter.read_table(large_parquet_file))
@@ -62,7 +59,7 @@ def test_parquet_adapter_streaming(large_parquet_file):
     assert rows[19999]["id"] == 19999
 
 
-def test_parquet_adapter_streaming_calls(mocker):
+def test_parquet_adapter_streaming_calls(mocker: MockerFixture) -> None:
     """Test that iter_batches is called with the correct batch size."""
     adapter = ParquetAdapter()
 
@@ -79,14 +76,14 @@ def test_parquet_adapter_streaming_calls(mocker):
     mock_pf_instance.iter_batches.assert_called_with(batch_size=10000)
 
 
-def test_context_manager(parquet_file):
+def test_context_manager(parquet_file: str) -> None:
     """Test that the adapter works as a context manager."""
     with ParquetAdapter() as adapter:
         rows = list(adapter.read_table(parquet_file))
         assert len(rows) == 5
 
 
-def test_file_not_found():
+def test_file_not_found() -> None:
     """Test behavior when the file does not exist."""
     adapter = ParquetAdapter()
     # pyarrow raises FileNotFound or ArrowIOError depending on version/OS
@@ -95,7 +92,7 @@ def test_file_not_found():
         list(adapter.read_table("non_existent_file.parquet"))
 
 
-def test_empty_file(tmp_path):
+def test_empty_file(tmp_path: Path) -> None:
     """Test reading an empty parquet file."""
     file_path = tmp_path / "empty.parquet"
     schema = pa.schema([("id", pa.int64())])
@@ -108,7 +105,7 @@ def test_empty_file(tmp_path):
     assert len(rows) == 0
 
 
-def test_invalid_file(tmp_path):
+def test_invalid_file(tmp_path: Path) -> None:
     """Test reading a file that is not a valid parquet file."""
     file_path = tmp_path / "invalid.parquet"
     file_path.write_text("not a parquet file")
