@@ -8,9 +8,10 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
-import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
+
 from coreason_graph_nexus.adapters.parquet_adapter import ParquetAdapter
 
 
@@ -21,7 +22,7 @@ def parquet_file(tmp_path):
         pa.array([1, 2, 3, 4, 5]),
         pa.array(["a", "b", "c", "d", "e"])
     ]
-    batch = pa.RecordBatch.from_arrays(data, names=['id', 'value'])
+    batch = pa.RecordBatch.from_arrays(data, names=["id", "value"])
     table = pa.Table.from_batches([batch])
     pq.write_table(table, file_path)
     return str(file_path)
@@ -37,7 +38,7 @@ def large_parquet_file(tmp_path):
         pa.array(ids),
         pa.array(values)
     ]
-    batch = pa.RecordBatch.from_arrays(data, names=['id', 'value'])
+    batch = pa.RecordBatch.from_arrays(data, names=["id", "value"])
     table = pa.Table.from_batches([batch])
     pq.write_table(table, file_path)
     return str(file_path)
@@ -48,8 +49,8 @@ def test_parquet_adapter_read(parquet_file):
     adapter = ParquetAdapter()
     rows = list(adapter.read_table(parquet_file))
     assert len(rows) == 5
-    assert rows[0] == {'id': 1, 'value': 'a'}
-    assert rows[4] == {'id': 5, 'value': 'e'}
+    assert rows[0] == {"id": 1, "value": "a"}
+    assert rows[4] == {"id": 5, "value": "e"}
 
 
 def test_parquet_adapter_streaming(large_parquet_file):
@@ -57,8 +58,8 @@ def test_parquet_adapter_streaming(large_parquet_file):
     adapter = ParquetAdapter()
     rows = list(adapter.read_table(large_parquet_file))
     assert len(rows) == 20000
-    assert rows[0]['id'] == 0
-    assert rows[19999]['id'] == 19999
+    assert rows[0]["id"] == 0
+    assert rows[19999]["id"] == 19999
 
 
 def test_parquet_adapter_streaming_calls(mocker):
@@ -89,16 +90,17 @@ def test_file_not_found():
     """Test behavior when the file does not exist."""
     adapter = ParquetAdapter()
     # pyarrow raises FileNotFound or ArrowIOError depending on version/OS
-    with pytest.raises(Exception):
+    # We use pytest.raises(Exception, match=...) to satisfy B017 and cover both cases
+    with pytest.raises((FileNotFoundError, pa.ArrowIOError)):
         list(adapter.read_table("non_existent_file.parquet"))
 
 
 def test_empty_file(tmp_path):
     """Test reading an empty parquet file."""
     file_path = tmp_path / "empty.parquet"
-    schema = pa.schema([('id', pa.int64())])
+    schema = pa.schema([("id", pa.int64())])
     # Write a file with schema but no rows
-    with pq.ParquetWriter(file_path, schema) as writer:
+    with pq.ParquetWriter(file_path, schema):
         pass
 
     adapter = ParquetAdapter()
@@ -113,5 +115,5 @@ def test_invalid_file(tmp_path):
 
     adapter = ParquetAdapter()
     # pyarrow raises ArrowInvalid for invalid files
-    with pytest.raises(Exception):
+    with pytest.raises(pa.ArrowInvalid):
         list(adapter.read_table(str(file_path)))
