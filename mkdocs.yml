@@ -3,3 +3,4 @@ theme:
   name: material
 nav:
   - Home: index.md
+  - Managed Lake Pattern: managed_lake_pattern.md
