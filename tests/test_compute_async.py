@@ -129,7 +129,9 @@ async def test_run_analysis_empty_graph(mock_client_async: MagicMock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_analysis_shortest_path_nodes_not_found(mock_client_async: MagicMock, sample_graph: nx.DiGraph) -> None:
+async def test_run_analysis_shortest_path_nodes_not_found(
+    mock_client_async: MagicMock, sample_graph: nx.DiGraph
+) -> None:
     computer = GraphComputerAsync(mock_client_async)
     mock_client_async.to_networkx.return_value = sample_graph
 

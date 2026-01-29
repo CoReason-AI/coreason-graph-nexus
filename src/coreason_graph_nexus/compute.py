@@ -304,12 +304,12 @@ class GraphComputerAsync:
             try:
                 path = nx.shortest_path(graph, source=source_node, target=target_node)
                 logger.info(f"Found shortest path length: {len(path)}")
-                return path # type: ignore
+                return path  # type: ignore
             except nx.NetworkXNoPath:
                 logger.warning(f"No path found between {source} and {target}")
                 return []
 
-        return await anyio.to_thread.run_sync(find_path)
+        return cast(list[str], await anyio.to_thread.run_sync(find_path))
 
     async def _compute_louvain(self, graph: nx.DiGraph, write_property: str) -> dict[str, int]:
         if graph.number_of_nodes() == 0:
@@ -333,4 +333,4 @@ class GraphComputerAsync:
 
         query = f"UNWIND $batch AS row MATCH (n) WHERE elementId(n) = row.id SET n.`{write_property}` = row.value"
         await self.client.batch_write(query, data)
-        return result
+        return cast(dict[str, int], result)

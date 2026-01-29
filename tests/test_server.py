@@ -8,6 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_graph_nexus
 
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +18,7 @@ from coreason_graph_nexus.server import app
 
 
 @pytest.fixture
-def mock_redis():
+def mock_redis() -> Generator[MagicMock, None, None]:
     with patch("redis.Redis.from_url") as mock:
         client_mock = MagicMock()
         client_mock.ping.return_value = True
@@ -26,7 +27,7 @@ def mock_redis():
 
 
 @pytest.fixture
-def mock_service():
+def mock_service() -> Generator[AsyncMock, None, None]:
     with patch("coreason_graph_nexus.server.ServiceAsync") as mock:
         service_instance = AsyncMock()
         service_instance.__aenter__.return_value = service_instance
@@ -41,13 +42,13 @@ def mock_service():
 
 
 @pytest.fixture
-def client(mock_redis, mock_service):
+def client(mock_redis: MagicMock, mock_service: AsyncMock) -> Generator[TestClient, None, None]:
     # TestClient triggers lifespan
     with TestClient(app) as c:
         yield c
 
 
-def test_health_check(client, mock_redis, mock_service):
+def test_health_check(client: TestClient, mock_redis: MagicMock, mock_service: AsyncMock) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
@@ -59,7 +60,7 @@ def test_health_check(client, mock_redis, mock_service):
     mock_service._client.execute_query.assert_called_with("MATCH (n) RETURN count(n) LIMIT 1")
 
 
-def test_health_degraded(client, mock_redis, mock_service):
+def test_health_degraded(client: TestClient, mock_redis: MagicMock, mock_service: AsyncMock) -> None:
     # Test Redis failure
     mock_redis.ping.side_effect = Exception("Redis Down")
     response = client.get("/health")
@@ -76,7 +77,7 @@ def test_health_degraded(client, mock_redis, mock_service):
     assert response.json()["status"] == "degraded"
 
 
-def test_project_ingest(client, mock_service):
+def test_project_ingest(client: TestClient, mock_service: AsyncMock) -> None:
     manifest_data = {
         "version": "1.0",
         "source_connection": "dummy_conn",
@@ -86,7 +87,7 @@ def test_project_ingest(client, mock_service):
                 "source_table": "people.parquet",
                 "id_column": "id",
                 "ontology_mapping": "None",
-                "properties": [{"source": "name", "target": "name"}]
+                "properties": [{"source": "name", "target": "name"}],
             }
         ],
         "relationships": [
@@ -96,15 +97,12 @@ def test_project_ingest(client, mock_service):
                 "start_node": "Person",
                 "start_key": "pid1",
                 "end_node": "Person",
-                "end_key": "pid2"
+                "end_key": "pid2",
             }
-        ]
+        ],
     }
 
-    payload = {
-        "manifest": manifest_data,
-        "source_base_path": "/tmp/data"
-    }
+    payload = {"manifest": manifest_data, "source_base_path": "/tmp/data"}
 
     response = client.post("/project/ingest", json=payload)
     assert response.status_code == 200
@@ -125,17 +123,12 @@ def test_project_ingest(client, mock_service):
     assert "/tmp/data/knows.parquet" in manifest_arg_rel.relationships[0].source_table
 
 
-def test_project_ingest_failure(client, mock_service):
+def test_project_ingest_failure(client: TestClient, mock_service: AsyncMock) -> None:
     # In background tasks, if exception occurs, TestClient might raise it if not handled?
     # But I catch Exception in the background task and log it.
     # So TestClient should NOT raise.
 
-    manifest_data = {
-        "version": "1.0",
-        "source_connection": "dummy",
-        "entities": [],
-        "relationships": []
-    }
+    manifest_data = {"version": "1.0", "source_connection": "dummy", "entities": [], "relationships": []}
     mock_service.ingest_entities.side_effect = Exception("Ingest Failed")
 
     # We patch logger to verify error is logged
@@ -152,13 +145,8 @@ def test_project_ingest_failure(client, mock_service):
         assert "Ingest Failed" in str(args[0])
 
 
-def test_compute_analysis(client, mock_service):
-    request_data = {
-        "center_node_id": "123",
-        "algorithm": "pagerank",
-        "depth": 2,
-        "write_property": "rank"
-    }
+def test_compute_analysis(client: TestClient, mock_service: AsyncMock) -> None:
+    request_data = {"center_node_id": "123", "algorithm": "pagerank", "depth": 2, "write_property": "rank"}
 
     mock_service.run_analysis.return_value = {"123": 0.5}
 
@@ -169,11 +157,8 @@ def test_compute_analysis(client, mock_service):
     mock_service.run_analysis.assert_called_once()
 
 
-def test_compute_analysis_errors(client, mock_service):
-    request_data = {
-        "center_node_id": "123",
-        "algorithm": "pagerank"
-    }
+def test_compute_analysis_errors(client: TestClient, mock_service: AsyncMock) -> None:
+    request_data = {"center_node_id": "123", "algorithm": "pagerank"}
 
     # ValueError
     mock_service.run_analysis.side_effect = ValueError("Bad Input")
@@ -192,13 +177,8 @@ def test_compute_analysis_errors(client, mock_service):
     assert response.status_code == 500
 
 
-def test_predict_links(client, mock_service):
-    request_data = {
-        "method": "semantic",
-        "source_label": "Person",
-        "target_label": "Movie",
-        "threshold": 0.8
-    }
+def test_predict_links(client: TestClient, mock_service: AsyncMock) -> None:
+    request_data = {"method": "semantic", "source_label": "Person", "target_label": "Movie", "threshold": 0.8}
 
     response = client.post("/predict/links", json=request_data)
     assert response.status_code == 200
@@ -207,12 +187,8 @@ def test_predict_links(client, mock_service):
     mock_service.predict_links.assert_called_once()
 
 
-def test_predict_links_errors(client, mock_service):
-    request_data = {
-        "method": "semantic",
-        "source_label": "Person",
-        "target_label": "Movie"
-    }
+def test_predict_links_errors(client: TestClient, mock_service: AsyncMock) -> None:
+    request_data = {"method": "semantic", "source_label": "Person", "target_label": "Movie"}
 
     mock_service.predict_links.side_effect = ValueError("Invalid Config")
     response = client.post("/predict/links", json=request_data)
@@ -223,12 +199,12 @@ def test_predict_links_errors(client, mock_service):
     assert response.status_code == 500
 
 
-def test_lifespan_redis_failure():
+def test_lifespan_redis_failure() -> None:
     with patch("redis.Redis.from_url") as mock_redis:
         mock_client = MagicMock()
         mock_client.ping.side_effect = Exception("Connection Failed")
         mock_redis.return_value = mock_client
 
         with pytest.raises(RuntimeError, match="Redis connection failed"):
-             with TestClient(app):
-                 pass
+            with TestClient(app):
+                pass
