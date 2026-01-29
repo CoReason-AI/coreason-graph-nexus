@@ -171,7 +171,7 @@ class GraphJob(BaseModel):
 
     id: UUID = Field(description="Unique identifier for the job.")
     manifest_path: str = Field(description="Path to the manifest file used for this job.")
-    status: Literal["RESOLVING", "PROJECTING", "COMPUTING", "COMPLETE"] = Field(
+    status: Literal["RESOLVING", "PROJECTING", "COMPUTING", "COMPLETE", "FAILED"] = Field(
         description="Current status of the job."
     )
     metrics: dict[str, int | float] = Field(

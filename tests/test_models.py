@@ -108,7 +108,7 @@ def test_projection_manifest_validation_error() -> None:
             version="1.0",
             source_connection="postgres://gold_db",
             entities=[],
-            relationships="invalid",  # type: ignore # noqa: PGH003
+            relationships="invalid",  # type: ignore
         )
 
 
@@ -222,7 +222,7 @@ def test_graph_job_validation_error() -> None:
         GraphJob(
             id=uuid.uuid4(),
             manifest_path="/path/to/manifest.yaml",
-            status="INVALID_STATUS",  # type: ignore # noqa: PGH003
+            status="INVALID_STATUS",  # type: ignore
         )
 
 
@@ -336,7 +336,7 @@ def test_graph_job_metrics_invalid_types() -> None:
             manifest_path="/path/to/manifest.yaml",
             status="COMPLETE",
             metrics={
-                "nodes_created": "not-a-number",  # type: ignore # noqa: PGH003
+                "nodes_created": "not-a-number",  # type: ignore
                 "edges_created": 0,
                 "ontology_misses": 0,
             },

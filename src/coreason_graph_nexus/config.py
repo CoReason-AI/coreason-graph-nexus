@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     neo4j_password: str = Field(default="password", description="Password for Neo4j")
     neo4j_database: str = Field(default="neo4j", description="Target database name")
 
+    # Redis Configuration
+    redis_url: str = Field(default="redis://localhost:6379/0", description="URL for Redis cache")
+
     # App Configuration
     log_level: str = Field(default="INFO", description="Logging level")
     default_batch_size: int = Field(default=10000, description="Default batch size for bulk operations")

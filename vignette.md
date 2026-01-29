@@ -14,6 +14,7 @@ The package constructs a best-in-class stack to handle the specific lifecycle of
 *   **`networkx` (The Thinker):** When deep reasoning is required—like calculating PageRank, Betweenness Centrality, or finding complex paths—the engine projects subgraphs into memory here. This avoids punishing the database with heavy iterative queries.
 *   **`redis` (The Librarian):** Identity resolution is expensive. To keep ingestion blazing fast, the `OntologyResolver` uses Redis to cache lookups, ensuring that repeated terms don't trigger redundant external API calls.
 *   **`scikit-learn` & `numpy` (The Analyst):** Powers the **Semantic Link Predictor**. By leveraging vector embeddings and cosine similarity, it allows the graph to "dream" new edges between nodes that are conceptually similar but explicitly unconnected.
+*   **`fastapi` & `uvicorn` (The Server):** Exposes the engine as a high-performance **Microservice (Service G)**, allowing external systems to trigger ingestion, analysis, and prediction via REST.
 *   **`pydantic`:** Enforces strict schema validation on the "Manifests" (declarative ETL configs), preventing bad data from ever entering the graph.
 
 The internal logic is driven by a `ProjectionEngine` that uses sophisticated closure-based batching (via `UNWIND` Cypher clauses) to handle massive datasets efficiently, and a `GraphComputer` that orchestrates the projection-computation-writeback cycle seamlessly.
@@ -83,4 +84,39 @@ request = LinkPredictionRequest(
 
 # Compute similarity matrix and materialize new edges
 predictor.predict_links(request)
+```
+
+### 4. Service G: The Graph Logic Microservice
+
+You can run `coreason-graph-nexus` as a standalone microservice using Docker or Uvicorn.
+
+**Start the Server:**
+```bash
+uvicorn coreason_graph_nexus.server:app --host 0.0.0.0 --port 8000
+```
+
+**Trigger Ingestion (Async):**
+```bash
+curl -X POST "http://localhost:8000/project/ingest" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "manifest": {
+             "version": "1.0",
+             "source_connection": "...",
+             "entities": [...],
+             "relationships": [...]
+           },
+           "source_base_path": "/data"
+         }'
+```
+
+**Request Analysis (PageRank):**
+```bash
+curl -X POST "http://localhost:8000/compute/analysis" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "center_node_id": "Node:1",
+           "algorithm": "pagerank",
+           "depth": 2
+         }'
 ```

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "coreason_graph_nexus"
-version = "0.3.1"
+version = "0.4.0"
 description = "orchestration engine for knowledge graph"
 authors = ["Gowtham A Rao <gowtham.rao@coreason.ai>"]
 license = "Prosperity-3.0"
@@ -13,7 +13,9 @@ loguru = "^0.7.2"
 pydantic = "^2.12.5"
 pyyaml = "^6.0.3"
 neo4j = "^6.1.0"
-redis = "^7.1.0"
+redis = {version = "^7.1.0", extras = ["hiredis"]}
+fastapi = "^0.115.0"
+uvicorn = "^0.30.0"
 networkx = "^3.6.1"
 numpy = "^2.4.1"
 scipy = "^1.17.0"
@@ -42,7 +44,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "coreason_graph_nexus"
-version = "0.3.1"
+version = "0.4.0"
 description = "orchestration engine for knowledge graph"
 readme = "README.md"
 requires-python = ">=3.11"

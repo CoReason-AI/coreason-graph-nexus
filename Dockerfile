@@ -34,4 +34,11 @@ WORKDIR /home/appuser/app
 COPY --from=builder /wheels /wheels
 
 # Install the application wheel
+# scikit-learn and numpy wheels will be installed automatically with their C-extensions
 RUN pip install --no-cache-dir /wheels/*.whl
+
+# Expose the API port
+EXPOSE 8000
+
+# Start the Graph Logic Microservice
+CMD ["uvicorn", "coreason_graph_nexus.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
