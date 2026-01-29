@@ -15,7 +15,12 @@ import pytest
 
 from coreason_graph_nexus.adapters.neo4j_adapter import Neo4jClientAsync
 from coreason_graph_nexus.interfaces import OntologyResolver, SourceAdapter
-from coreason_graph_nexus.models import GraphJob, LinkPredictionRequest, ProjectionManifest
+from coreason_graph_nexus.models import (
+    GraphAnalysisRequest,
+    GraphJob,
+    LinkPredictionRequest,
+    ProjectionManifest,
+)
 from coreason_graph_nexus.service import Service, ServiceAsync
 
 # --- Mocks ---
@@ -103,7 +108,7 @@ async def test_service_async_lifecycle_internal(mocker: Any, mock_resolver: Mock
 async def test_service_async_delegation(
     mocker: Any, mock_resolver: MockOntologyResolver, mock_client_async: MagicMock
 ) -> None:
-    """Test that ServiceAsync delegates to Projector/Predictor."""
+    """Test that ServiceAsync delegates to Projector/Predictor/Computer."""
 
     # Patch the classes used in __init__
     mock_proj_cls = mocker.patch("coreason_graph_nexus.service.ProjectionEngineAsync")
@@ -114,6 +119,10 @@ async def test_service_async_delegation(
     mock_pred_cls = mocker.patch("coreason_graph_nexus.service.LinkPredictorAsync")
     mock_pred_instance = mock_pred_cls.return_value
     mock_pred_instance.predict_links = AsyncMock()
+
+    mock_comp_cls = mocker.patch("coreason_graph_nexus.service.GraphComputerAsync")
+    mock_comp_instance = mock_comp_cls.return_value
+    mock_comp_instance.run_analysis = AsyncMock()
 
     svc = ServiceAsync(resolver=mock_resolver, client=mock_client_async)
 
@@ -135,6 +144,11 @@ async def test_service_async_delegation(
     await svc.predict_links(req)
     cast(AsyncMock, svc.predictor.predict_links).assert_called_once_with(req)
 
+    # Test Run Analysis
+    req_analysis = MagicMock(spec=GraphAnalysisRequest)
+    await svc.run_analysis(req_analysis)
+    cast(AsyncMock, svc.computer.run_analysis).assert_called_once_with(req_analysis)
+
 
 def test_service_sync_facade(mocker: Any, mock_resolver: MockOntologyResolver, mock_client_async: MagicMock) -> None:
     """Test Service (Sync) facade delegates via anyio.run."""
@@ -147,6 +161,7 @@ def test_service_sync_facade(mocker: Any, mock_resolver: MockOntologyResolver, m
     mock_svc_async.ingest_entities = AsyncMock()
     mock_svc_async.ingest_relationships = AsyncMock()
     mock_svc_async.predict_links = AsyncMock()
+    mock_svc_async.run_analysis = AsyncMock()
 
     svc = Service(resolver=mock_resolver, client=mock_client_async)
 
@@ -171,3 +186,7 @@ def test_service_sync_facade(mocker: Any, mock_resolver: MockOntologyResolver, m
     req = MagicMock(spec=LinkPredictionRequest)
     svc.predict_links(req)
     mock_svc_async.predict_links.assert_called_with(req)
+
+    req_analysis = MagicMock(spec=GraphAnalysisRequest)
+    svc.run_analysis(req_analysis)
+    mock_svc_async.run_analysis.assert_called_with(req_analysis)
