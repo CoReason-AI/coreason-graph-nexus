@@ -84,9 +84,11 @@ async def project_ingest(request: IngestRequest, background_tasks: BackgroundTas
     if request.source_base_path:
         base = Path(request.source_base_path)
         for entity in manifest.entities:
-            entity.source_table = str(base / entity.source_table)
+            # We convert to string using as_posix() to ensure consistent path separators (forward slash)
+            # This is safer for cross-platform compatibility and testing assertions.
+            entity.source_table = (base / entity.source_table).as_posix()
         for rel in manifest.relationships:
-            rel.source_table = str(base / rel.source_table)
+            rel.source_table = (base / rel.source_table).as_posix()
 
     job_id = uuid.uuid4()
     job = GraphJob(id=job_id, manifest_path="api_request", status="PROJECTING")
