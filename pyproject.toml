@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "coreason_graph_nexus"
-version = "0.3.1"
+version = "0.4.0"
 description = "orchestration engine for knowledge graph"
 authors = ["Gowtham A Rao <gowtham.rao@coreason.ai>"]
 license = "Prosperity-3.0"
@@ -44,7 +44,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "coreason_graph_nexus"
-version = "0.3.1"
+version = "0.4.0"
 description = "orchestration engine for knowledge graph"
 readme = "README.md"
 requires-python = ">=3.11"
