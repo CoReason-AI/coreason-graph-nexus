@@ -19,6 +19,7 @@
 *   **Ontology Resolver (The Librarian):**  Standardizes entity identities (e.g., merging "Tylenol" and "APAP") with high-performance Redis caching.
 *   **Graph Computer (The Thinker):** Executes complex algorithms like PageRank, Betweenness Centrality, and Community Detection in memory.
 *   **Link Predictor (The Analyst):** Infers implicit relationships using both heuristic rules and semantic vector embeddings.
+*   **Graph Logic Microservice (Service G):** Exposes all engine capabilities via a high-performance REST API (FastAPI) for seamless integration into microservice architectures.
 
 ## 📦 Installation
 
@@ -54,6 +55,17 @@ with Neo4jClient(uri="bolt://localhost:7687", auth=neo4j_auth) as client:
     results = computer.run_analysis(request)
     print(f"Computed PageRank for {len(results)} nodes.")
 ```
+
+### Running as a Microservice
+
+You can also deploy the engine as a standalone service:
+
+```bash
+# Start the API server
+uvicorn coreason_graph_nexus.server:app --host 0.0.0.0 --port 8000
+```
+
+Refer to [`vignette.md`](vignette.md) for detailed API usage examples.
 
 ## 📄 License
 

@@ -3,7 +3,7 @@
 **Domain:** Knowledge Graph Construction, Ontology Alignment, & In-Memory Graph Reasoning
 **Architectural Role:** The "Platinum Layer" Builder / The Graph Logic Engine. Hybrid Compute & ETL Edition
 **Core Philosophy:** "Build robustly in Neo4j. Reason fast in NetworkX. Relations are First-Class Citizens."
-**Dependencies:** coreason-mcp (Access), neo4j (Storage), networkx (Compute), scikit-learn (Clustering), redis (Cache)
+**Dependencies:** coreason-mcp (Access), neo4j (Storage), networkx (Compute), scikit-learn (Clustering), redis (Cache), fastapi (API), uvicorn (Server)
 
 ## 1. Executive Summary
 
@@ -13,6 +13,7 @@ It serves two distinct but connected functions:
 
 1.  **The Builder (ETL):** It transforms static data (SQL, Parquet) into a connected semantic fabric stored in **Neo4j**. It uses **Universal Identity Resolution** to ensure "Tylenol" and "APAP" merge into a single node.
 2.  **The Thinker (Compute):** It uses **networkx** for in-memory graph algorithms. Instead of relying on slow DB queries for complex logic, it projects subgraphs into memory to run algorithms like PageRank, Shortest Path, and Community Detection on the fly.
+3.  **Service G (Microservice):** Wraps these capabilities in a **FastAPI** microservice, offering a high-performance REST API for ingestion, analysis, and link prediction.
 
 ## 2. Functional Philosophy
 
